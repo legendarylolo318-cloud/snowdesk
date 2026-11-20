@@ -32,6 +32,9 @@ wgpu = "30.0.2"
 winit = { version = "0.30.13", default-features = false, features = ["x11", "rwh_06"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
+# Native PulseAudio host (pure Rust; also PipeWire via pipewire-pulse), so
+# audio works without pipewire-alsa / pulseaudio-alsa. ALSA stays the fallback.
+cpal = { version = "0.18.2", features = ["pulseaudio"] }
 ksni = { version = "0.3.7", default-features = false, features = ["async-io", "blocking"] }
 libc = "0.2.191"
 serde_json = "1.0.154"

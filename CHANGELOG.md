@@ -62,6 +62,11 @@ First public release.
 - Cover art: a stale image was shown (cached file path), the temp files went
   to a shared `/tmp`, and full-size covers stayed in memory. Art is now decoded
   in memory and scaled to 176 px.
+- Audio on Linux systems without pipewire-alsa: the default ALSA device
+  failed and the fallback picked ALSA's "null" sink, so every track
+  "finished" in a second with no sound. Linux builds now talk to
+  PulseAudio / PipeWire (pipewire-pulse) natively, keep ALSA as the fallback,
+  and never use the null sink.
 - Audio: one corrupt file stopped "next"; a failed output was retried per
   track; a lost audio device was never reopened. Playback now skips unreadable
   files, resumes on a new device, and an idle player no longer wakes up.

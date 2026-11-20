@@ -70,6 +70,22 @@ pub fn spawn(
     AudioHandle { tx, levels }
 }
 
+/// Fallback device order: lower is better; `u8::MAX` = never use.
+fn device_rank(desc: &str) -> u8 {
+    let d = desc.to_ascii_lowercase();
+    if d.contains("discard all samples") || d == "null" {
+        u8::MAX
+    } else if d.contains("pipewire") {
+        0
+    } else if d.contains("pulse") {
+        1
+    } else if d.starts_with("default") || d.contains("default") {
+        2
+    } else {
+        3
+    }
+}
+
 struct Engine {
     events: Sender<AudioEvent>,
     levels: Arc<tap::Levels>,
@@ -144,13 +160,32 @@ impl Engine {
         // Default device first, then any other output (same order as
         // rodio's `open_default_sink`, plus the error callback).
         let mut res = DeviceSinkBuilder::from_default_device().and_then(open);
+        if let Err(e) = &res {
+            tracing::debug!("default audio device: {e}");
+        }
         if res.is_err()
             && let Ok(devs) = rodio::cpal::default_host().output_devices()
         {
-            for d in devs {
-                if let Ok(sink) = DeviceSinkBuilder::from_device(d).and_then(open) {
-                    res = Ok(sink);
-                    break;
+            // Prefer sound-server devices; never pick ALSA's "null" sink,
+            // which discards samples (tracks would "finish" instantly).
+            let mut devs: Vec<_> = devs
+                .map(|d| {
+                    let name = rodio::DeviceTrait::description(&d)
+                        .map(|n| n.to_string())
+                        .unwrap_or_default();
+                    (device_rank(&name), name, d)
+                })
+                .filter(|(rank, _, _)| *rank < u8::MAX)
+                .collect();
+            devs.sort_by_key(|(rank, _, _)| *rank);
+            for (_, name, d) in devs {
+                match DeviceSinkBuilder::from_device(d).and_then(open) {
+                    Ok(sink) => {
+                        tracing::info!("audio output: {name}");
+                        res = Ok(sink);
+                        break;
+                    }
+                    Err(e) => tracing::debug!("audio device {name}: {e}"),
                 }
             }
         }
@@ -354,6 +389,7 @@ impl Engine {
             return;
         }
         if p.empty() {
+            tracing::debug!("track finished at {:?}", p.get_pos());
             self.started = false;
             let last = i + 1 >= self.tracks().len();
             if self.shuffle || !last || self.repeat {
@@ -425,5 +461,23 @@ impl Engine {
                 self.tick();
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::device_rank;
+
+    /// Regression: the fallback picked ALSA's null device, so every track
+    /// "finished" immediately.
+    #[test]
+    fn null_sink_is_never_used_and_servers_come_first() {
+        assert_eq!(
+            device_rank("Discard all samples (playback) or generate zero samples (capture)"),
+            u8::MAX
+        );
+        assert_eq!(device_rank("null"), u8::MAX);
+        assert!(device_rank("PipeWire Sound Server") < device_rank("HDA Intel PCH, ALC897 Analog"));
+        assert!(device_rank("PulseAudio Sound Server") < device_rank("Default ALSA Output"));
     }
 }

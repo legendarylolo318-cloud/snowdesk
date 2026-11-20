@@ -135,6 +135,9 @@ are scanned too):
 | Windows | `%APPDATA%\snowdesk\music` |
 | Both | a `music/` folder next to the executable, or next to the `.AppImage` file |
 
+On Linux, sound goes to PulseAudio or PipeWire (through pipewire-pulse) when
+one is running, otherwise to ALSA. On Windows it uses WASAPI.
+
 The first folder is created on first run. The Music tab has an "Open music
 folder" button. New, removed and renamed files show up automatically.
 
