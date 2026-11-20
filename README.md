@@ -7,17 +7,19 @@ Written in Rust. The control panel uses [Slint](https://slint.dev) (Tokyo Night
 theme); the overlay is wgpu on a layer-shell surface (Wayland) or transparent
 always-on-top windows (X11, Windows).
 
-<!-- SCREENSHOT PLACEHOLDER: docs/desktop.png
-     Passive mode: snow falling over the desktop and piling on window tops. -->
-_Screenshot coming soon: snow piling up on window tops._
+![Snow piling up on window tops, with string lights and penguins](docs/desktop.png)
 
-<!-- GIF PLACEHOLDER: docs/play-mode.gif
-     Play mode: rolling a snowball, stacking a snowman, decorating it, throwing. -->
-_GIF coming soon: building and decorating a snowman in play mode._
+**Play mode:** roll snowballs, lift them onto each other, decorate the snowman,
+then poke, carry and snowball the penguin.
 
-<!-- SCREENSHOT PLACEHOLDER: docs/panel.png
-     The control panel (Snow / Play & tools / Music / About tabs). -->
-_Screenshot coming soon: the control panel._
+![Building and decorating a snowman in play mode](docs/play-mode.gif)
+
+<details>
+<summary>Control panel</summary>
+
+![The control panel](docs/panel.png)
+
+</details>
 
 ## Download
 
@@ -49,8 +51,12 @@ Each release includes `SHA256SUMS.txt`. Check a download with
   decoration palette (eyes, nose, arms, hat, scarves, buttons), quick-stamp
   snowman, generated mountain range, right-click flick to throw, snow angels,
   undo/redo (30 steps), clear, save/load scene, optional restore on launch.
-- Festive toggles: a penguin that leaves footprints and sleds, string lights on
-  window edges, ice sparkles and a night-time aurora.
+- **Penguins**: up to 12 per monitor, sized 0.5×–3×. They waddle, leave
+  footprints, sled down slopes and walk along window tops. In play mode, click
+  one to make it hop away, drag to carry it, flick to throw it, or hit it with
+  a snowball to knock it over.
+- Festive toggles: string lights on window edges, ice sparkles and a
+  night-time aurora.
 - **Music player** (rodio + symphonia) for mp3, ogg, flac, wav and m4a/aac,
   with tags and cover art. The folder is watched live; shuffle, repeat, volume
   and seek are included. Unreadable files are skipped, and playback moves to a
@@ -72,6 +78,9 @@ Each release includes `SHA256SUMS.txt`. Check a download with
 | Tray menu / panel button / `snowdesk --toggle-play` | toggle **play mode** |
 | Play mode, left button | use the selected tool (tool bar at the top of each screen) |
 | Play mode, snowball tool | press and drag along the snow to roll a ball; it grows as it picks up snow |
+| Play mode, while rolling | move the pointer up to lift the ball, release over a bigger ball to stack it |
+| Play mode, click a penguin | it hops and runs away |
+| Play mode, drag a penguin | carry it; let go to drop it, or flick to throw it |
 | Play mode, drag a decoration from the tool bar onto a ball | decorate a snowman |
 | Play mode, right-button flick | throw a snowball |
 | Tool bar `−` / `+` | brush radius |
@@ -79,7 +88,8 @@ Each release includes `SHA256SUMS.txt`. Check a download with
 | `snowdesk --pause` | pause / resume the snow |
 
 Stack two or three balls (smaller on top) and they become a snowman: it
-wobbles and accepts decorations.
+wobbles, holds together and accepts decorations. A thrown snowball can still
+knock it over.
 
 ## Command line and IPC
 

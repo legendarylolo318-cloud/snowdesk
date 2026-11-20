@@ -130,19 +130,30 @@ impl World {
         self.removed_acc = 0.0;
     }
 
-    pub fn roll_move(&mut self, x: f32, _y: f32) {
+    pub fn roll_move(&mut self, x: f32, y: f32) {
         let Some(i) = self.rolling else { return };
         let cell = self.cell;
         let (old_x, mut r) = (self.balls[i].x, self.balls[i].r);
         // Follow the cursor horizontally, sit on the snow surface.
         let nx = x.clamp(r, self.w - r);
+        // The surface nearest below the pointer, so a ball can be rolled on
+        // the ground underneath a window ledge, not only on top of it.
+        let from = ((y - r * 0.3) / cell).floor() as i32;
         let mut ground = f32::MAX;
         let mut px = nx - r * 0.5;
         while px <= nx + r * 0.5 {
-            ground = ground.min(self.grid.surface_y((px / cell) as i32) as f32 * cell);
+            ground = ground.min(self.grid.surface_from((px / cell) as i32, from) as f32 * cell);
             px += cell;
         }
         let max_r = self.h * 0.18;
+        // Pointer well above the snow: lift and carry the ball (no rolling),
+        // so it can be dropped onto another ball to build a snowman.
+        if y < ground - r * 2.2 {
+            let b = &mut self.balls[i];
+            b.x = nx;
+            b.y = y.max(r);
+            return;
+        }
         // Scoop snow under the ball.
         let (bx, by) = (nx, ground - r * 0.65);
         let moved = (nx - old_x).abs();
@@ -175,12 +186,30 @@ impl World {
     }
 
     pub fn roll_end(&mut self) {
-        if let Some(i) = self.rolling.take()
-            && let Some(b) = self.balls.get_mut(i)
-        {
-            b.held = false;
-            b.vx = 0.0;
-            b.vy = 0.0;
+        let Some(i) = self.rolling.take() else {
+            return;
+        };
+        let Some(b) = self.balls.get(i) else {
+            return;
+        };
+        // Stacking assist: released above a bigger ball, roughly centred?
+        // Snap onto its centre so the stack does not roll off.
+        let (bx, by, br) = (b.x, b.y, b.r);
+        let below = self
+            .balls
+            .iter()
+            .enumerate()
+            .filter(|&(j, o)| {
+                j != i && !o.thrown && o.r > br && o.y > by && (o.x - bx).abs() < o.r * 0.75
+            })
+            .min_by(|a, b| a.1.y.total_cmp(&b.1.y))
+            .map(|(_, o)| o.x);
+        let b = &mut self.balls[i];
+        b.held = false;
+        b.vx = 0.0;
+        b.vy = 0.0;
+        if let Some(x) = below {
+            b.x = x;
         }
     }
 
@@ -480,10 +509,11 @@ mod tests {
         let mut w = world();
         pile(&mut w);
         let before = w.grid.count(PACKED);
-        w.roll_begin(40.0 * 4.0, 200.0);
+        // Drag along the top of the pile (y = 300).
+        w.roll_begin(40.0 * 4.0, 295.0);
         let r0 = w.balls[0].r;
         for i in 0..200 {
-            w.roll_move(160.0 + i as f32, 200.0);
+            w.roll_move(160.0 + i as f32, 295.0);
         }
         w.roll_end();
         let removed = before - w.grid.count(PACKED);
@@ -492,6 +522,61 @@ mod tests {
         // Area growth never exceeds the snow removed.
         let grown = std::f32::consts::PI * (w.balls[0].r.powi(2) - r0.powi(2));
         assert!(grown <= removed as f32 * w.cell * w.cell + 1.0);
+    }
+
+    /// Regression: rolling under a window always put the ball on the
+    /// window's top edge.
+    #[test]
+    fn rolls_on_the_ground_under_a_window() {
+        let mut w = world();
+        pile(&mut w);
+        w.set_windows(&[crate::sim::Rect {
+            x: 0.0,
+            y: 100.0,
+            w: 400.0,
+            h: 100.0,
+        }]);
+        w.roll_begin(100.0, 295.0);
+        for i in 0..60 {
+            w.roll_move(100.0 + i as f32, 295.0);
+        }
+        assert!(w.balls[0].y > 250.0, "on the pile, y {}", w.balls[0].y);
+        // Pointer up on the window: the ball goes onto the ledge.
+        w.roll_move(200.0, 90.0);
+        assert!(w.balls[0].y < 110.0, "on the ledge, y {}", w.balls[0].y);
+    }
+
+    /// Lift a rolled ball above another one and let go: they stack into a
+    /// snowman (this used to be impossible by hand).
+    #[test]
+    fn carried_ball_drops_onto_another_and_stacks() {
+        let mut w = World::new(
+            400,
+            400,
+            1.0,
+            &Config {
+                intensity: 0.0,
+                ..Config::default()
+            },
+        );
+        let base = Ball::new(200.0, 400.0 - 40.0, 40.0);
+        w.balls.push(base);
+        w.roll_begin(100.0, 390.0);
+        w.balls[1].r = 26.0;
+        w.roll_move(150.0, 200.0); // lifted
+        assert!(w.balls[1].y < 250.0, "carried, y {}", w.balls[1].y);
+        // Released a bit off-centre: the assist centres it.
+        w.roll_move(218.0, 200.0);
+        w.roll_end();
+        for _ in 0..240 {
+            w.step();
+        }
+        assert_eq!(
+            w.snowmen.len(),
+            1,
+            "{:?}",
+            w.balls.iter().map(|b| (b.x, b.y, b.r)).collect::<Vec<_>>()
+        );
     }
 
     #[test]

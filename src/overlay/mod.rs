@@ -2,6 +2,8 @@
 //! Backends (Wayland layer-shell, winit for X11/Windows) feed it surfaces and
 //! pointer events and call `Engine::drive` in their event loop.
 
+#[cfg(debug_assertions)]
+mod demo;
 pub mod toolbar;
 #[cfg(target_os = "linux")]
 pub mod wayland;
@@ -163,6 +165,36 @@ impl Drive {
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+struct PenguinGrab {
+    mon: usize,
+    idx: usize,
+    start: (f32, f32),
+    /// Moved far enough to count as a drag (else it is a poke on release).
+    dragging: bool,
+}
+
+/// Pointer velocity over the recent history (px/s), capped.
+fn flick_velocity(
+    hist: &VecDeque<(Instant, f32, f32)>,
+    now: Instant,
+    x: f32,
+    y: f32,
+    max: f32,
+) -> (f32, f32) {
+    let Some(&(t0, x0, y0)) = hist.front() else {
+        return (0.0, 0.0);
+    };
+    let dt = (now - t0).as_secs_f32().max(0.03);
+    let (mut vx, mut vy) = ((x - x0) / dt, (y - y0) / dt);
+    let sp = vx.hypot(vy);
+    if sp > max {
+        vx *= max / sp;
+        vy *= max / sp;
+    }
+    (vx, vy)
+}
+
 pub struct Engine {
     gpu: Arc<Gpu>,
     ctx: OverlayCtx,
@@ -186,6 +218,10 @@ pub struct Engine {
     stroke: bool,
     decor_drag: Option<(DecorKind, u8)>,
     right_down: bool,
+    /// Penguin pressed with the left button (play mode).
+    penguin: Option<PenguinGrab>,
+    #[cfg(debug_assertions)]
+    demo: Option<demo::Demo>,
     ptr_hist: VecDeque<(Instant, f32, f32)>,
     pending_play: Option<bool>,
     quit: bool,
@@ -220,6 +256,9 @@ impl Engine {
             right_down: false,
             ptr_hist: VecDeque::new(),
             pending_play: None,
+            penguin: None,
+            #[cfg(debug_assertions)]
+            demo: demo::Demo::from_env(),
             quit: false,
         }
     }
@@ -274,6 +313,7 @@ impl Engine {
         if let Some(i) = self.mons.iter().position(|m| m.spec.name == name) {
             self.mons.remove(i);
             self.ptr_mon = None;
+            self.penguin = None;
             let _ = self
                 .ctx
                 .ev_tx
@@ -290,6 +330,7 @@ impl Engine {
                 m.force_windows = true;
                 m.toolbar = toolbar::layout(spec.w as f32, spec.scale);
                 self.ptr_mon = None;
+                self.penguin = None;
             }
             m.spec = spec;
         }
@@ -304,6 +345,7 @@ impl Engine {
             self.right_down = false;
             self.stroke = false;
             self.decor_drag = None;
+            self.drop_penguin();
             for m in &mut self.mons {
                 m.world.roll_end();
             }
@@ -419,6 +461,15 @@ impl Engine {
         }
     }
 
+    /// Let go of a carried penguin (it falls where it is).
+    fn drop_penguin(&mut self) {
+        if let Some(g) = self.penguin.take()
+            && let Some(m) = self.mons.get_mut(g.mon)
+        {
+            m.world.release_penguin(g.idx, 0.0, 0.0);
+        }
+    }
+
     fn each_world(&mut self, f: impl Fn(&mut World)) {
         for m in &mut self.mons {
             f(&mut m.world);
@@ -442,6 +493,10 @@ impl Engine {
             if self.ptr_mon == Some(mi) {
                 self.ptr_mon = None;
             }
+            if self.penguin.is_some_and(|g| g.mon == mi) {
+                self.drop_penguin();
+                self.left_down = false;
+            }
             return;
         }
         self.ptr_mon = Some(mi);
@@ -458,6 +513,19 @@ impl Engine {
                     .is_some_and(|h| now - h.0 > Duration::from_millis(150))
                 {
                     self.ptr_hist.pop_front();
+                }
+                if let Some(g) = self.penguin.as_mut()
+                    && g.mon == mi
+                {
+                    let w = &mut self.mons[mi].world;
+                    if !g.dragging && (x - g.start.0).hypot(y - g.start.1) > 6.0 * sc {
+                        g.dragging = true;
+                        w.grab_penguin(g.idx);
+                    }
+                    if g.dragging {
+                        w.drag_penguin(g.idx, x, y);
+                    }
+                    return;
                 }
                 if self.left_down && self.stroke {
                     let w = &mut self.mons[mi].world;
@@ -482,6 +550,18 @@ impl Engine {
                     return;
                 }
                 self.left_down = true;
+                // Penguins take clicks before any tool: poke, carry, throw.
+                if let Some(idx) = self.mons[mi].world.penguin_at(x, y) {
+                    self.penguin = Some(PenguinGrab {
+                        mon: mi,
+                        idx,
+                        start: (x, y),
+                        dragging: false,
+                    });
+                    self.ptr_hist.clear();
+                    self.ptr_hist.push_back((now, x, y));
+                    return;
+                }
                 let tool = self.tool;
                 let w = &mut self.mons[mi].world;
                 w.push_undo();
@@ -496,6 +576,18 @@ impl Engine {
                 }
             }
             Ptr::Up(Button::Left, x, y) => {
+                if let Some(g) = self.penguin.take() {
+                    if let Some(m) = self.mons.get_mut(g.mon) {
+                        if g.dragging {
+                            let (vx, vy) = flick_velocity(&self.ptr_hist, now, x, y, 1800.0 * sc);
+                            m.world.release_penguin(g.idx, vx, vy);
+                        } else {
+                            m.world.poke_penguin(g.idx, x);
+                        }
+                    }
+                    self.left_down = false;
+                    return;
+                }
                 if let Some((k, c)) = self.decor_drag.take() {
                     self.mons[mi].world.decorate_at(x, y, k, c);
                 }
@@ -513,18 +605,9 @@ impl Engine {
             }
             Ptr::Up(Button::Right, x, y) if self.right_down => {
                 self.right_down = false;
-                if let Some(&(t0, x0, y0)) = self.ptr_hist.front() {
-                    let dt = (now - t0).as_secs_f32().max(0.03);
-                    let (mut vx, mut vy) = ((x - x0) / dt, (y - y0) / dt);
-                    let max = 2600.0 * sc;
-                    let sp = vx.hypot(vy);
-                    if sp > max {
-                        vx *= max / sp;
-                        vy *= max / sp;
-                    }
-                    if sp > 150.0 * sc {
-                        self.mons[mi].world.throw_ball(x, y, vx, vy);
-                    }
+                let (vx, vy) = flick_velocity(&self.ptr_hist, now, x, y, 2600.0 * sc);
+                if vx.hypot(vy) > 150.0 * sc {
+                    self.mons[mi].world.throw_ball(x, y, vx, vy);
                 }
             }
             _ => {}
@@ -606,6 +689,8 @@ impl Engine {
         while let Ok(c) = self.ctx.cmd_rx.try_recv() {
             self.handle(c);
         }
+        #[cfg(debug_assertions)]
+        self.demo_tick();
         if self.gpu.is_lost() {
             return Drive {
                 sleep: Duration::ZERO,
@@ -703,6 +788,7 @@ impl Engine {
         let (play, tool, radius) = (self.play, self.tool, self.radius);
         let ptr = (self.ptr_mon, self.ptr);
         let drag = self.decor_drag;
+        let carrying = self.penguin.is_some();
         let held = self.left_down && self.stroke;
         let aurora = self.aurora;
         let sparkle = self.cfg.sparkles;
@@ -719,6 +805,7 @@ impl Engine {
                 continue;
             }
             m.blanked = false;
+            m.world.play = play;
             let sc = m.spec.scale;
             if new_beats > 0 {
                 m.world.beat((bass * 4.0).clamp(0.3, 1.2));
@@ -739,7 +826,7 @@ impl Engine {
                     (radius - 6.0) / 194.0,
                     sc,
                 );
-                if ptr.0 == Some(i) {
+                if ptr.0 == Some(i) && !carrying {
                     let r = radius * sc;
                     if matches!(
                         tool,
@@ -763,6 +850,13 @@ impl Engine {
                         );
                     }
                 }
+            }
+            #[cfg(debug_assertions)]
+            if let Some(d) = self.demo.as_ref()
+                && d.monitor() == m.spec.name
+                && play
+            {
+                Self::demo_cursor(&mut m.instances, d.cursor.0, d.cursor.1, sc);
             }
             let (cell, time) = (m.world.cell, m.world.time);
             m.renderer

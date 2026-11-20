@@ -157,6 +157,8 @@ export component Panel inherits Window {
     in-out property <bool> windows-collide: true;
     in-out property <bool> music-reactive: true;
     in-out property <bool> critter: false;
+    in-out property <float> penguins: 1;
+    in-out property <float> penguin-size: 1.0;
     in-out property <bool> lights: false;
     in-out property <bool> sparkles: false;
     in-out property <bool> aurora: false;
@@ -279,7 +281,15 @@ export component Panel inherits Window {
                     Sw { label: "Cursor pushes flakes (wind)"; checked <=> root.cursor-wind; toggled => { root.config-edited(); } }
                     Sw { label: "Snow settles on windows"; checked <=> root.windows-collide; toggled => { root.config-edited(); } }
                     Sw { label: "Music-reactive snow"; checked <=> root.music-reactive; toggled => { root.config-edited(); } }
-                    Sw { label: "Penguin critter"; checked <=> root.critter; toggled => { root.config-edited(); } }
+                    Sw { label: "Penguins"; checked <=> root.critter; toggled => { root.config-edited(); } }
+                    if root.critter: Row {
+                        label: "  How many: " + round(root.penguins);
+                        Sld { minimum: 1; maximum: 12; value <=> root.penguins; edited => { root.penguins = round(root.penguins); root.config-edited(); } }
+                    }
+                    if root.critter: Row {
+                        label: "  Size: " + round(root.penguin-size * 10) / 10 + "×";
+                        Sld { minimum: 0.5; maximum: 3; value <=> root.penguin-size; edited => { root.config-edited(); } }
+                    }
                     Sw { label: "String lights on windows"; checked <=> root.lights; toggled => { root.config-edited(); } }
                     Sw { label: "Ice sparkles"; checked <=> root.sparkles; toggled => { root.config-edited(); } }
                     Sw { label: "Aurora at night"; checked <=> root.aurora; toggled => { root.config-edited(); } }
@@ -297,7 +307,7 @@ export component Panel inherits Window {
                 VerticalLayout {
                     padding: 16px; spacing: 12px; alignment: start;
                     Text {
-                        text: "Play mode makes the overlay catch the mouse. Left-click: use tool · right-click flick: throw a snowball · Esc: back to passive.";
+                        text: "Play mode makes the overlay catch the mouse. Left-click: use tool · right-click flick: throw a snowball · click a penguin to poke it, drag to carry or fling it · Esc: back to passive.";
                         color: Theme.muted; font-size: 12px; wrap: word-wrap;
                     }
                     Text { text: "Tool"; color: Theme.muted; font-size: 12px; }

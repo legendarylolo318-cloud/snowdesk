@@ -33,6 +33,13 @@ pub struct Grid {
     flip: bool,
     #[serde(skip)]
     pub moved_last: usize,
+    /// When set, cells that start falling freely (e.g. sliding off a window
+    /// ledge) are removed and reported in `fell` so the world can turn them
+    /// into flakes, which respect the pile height limit.
+    #[serde(skip)]
+    pub free_fall_to_flakes: bool,
+    #[serde(skip)]
+    pub fell: Vec<(u16, u16)>,
 }
 
 impl Grid {
@@ -49,6 +56,8 @@ impl Grid {
             occupied: Vec::new(),
             flip: false,
             moved_last: 0,
+            free_fall_to_flakes: false,
+            fell: Vec::new(),
         };
         g.rebuild_meta();
         g
@@ -200,6 +209,17 @@ impl Grid {
         }
         let below = self.get(x, y + 1);
         if below == EMPTY {
+            if self.free_fall_to_flakes && c == SNOW && self.get(x, y + 2) == EMPTY {
+                let i = y as usize * self.w + x as usize;
+                self.cells[i] = EMPTY;
+                self.mark(x as usize, y as usize);
+                if y > 0 {
+                    self.mark(x as usize, y as usize - 1);
+                }
+                self.fell.push((x as u16, y as u16));
+                self.moved_last += 1;
+                return;
+            }
             self.swap((x, y), (x, y + 1));
             return;
         }
@@ -271,6 +291,26 @@ impl Grid {
     pub fn mark_all_dirty(&mut self) {
         self.dirty.iter_mut().for_each(|d| *d = true);
         self.awake_next.iter_mut().for_each(|a| *a = true);
+    }
+
+    /// The surface in column x nearest below row `from`: the first solid
+    /// cell at or below it, or, if `from` is inside solid cells, the top of
+    /// that solid run. Returns h if there is nothing below.
+    pub fn surface_from(&self, x: i32, from: i32) -> i32 {
+        if x < 0 || x >= self.w as i32 {
+            return 0;
+        }
+        let mut y = from.clamp(0, self.h as i32);
+        if y < self.h as i32 && self.get(x, y) != EMPTY {
+            while y > 0 && self.get(x, y - 1) != EMPTY {
+                y -= 1;
+            }
+            return y;
+        }
+        while y < self.h as i32 && self.get(x, y) == EMPTY {
+            y += 1;
+        }
+        y
     }
 
     /// Y of the highest non-empty cell in column x (h if none).
@@ -378,6 +418,23 @@ mod tests {
         g.set(3, 70, EMPTY);
         g.drain_dirty(|_, _, _, _| {});
         assert_eq!(g.first_snow_row(), None);
+    }
+
+    #[test]
+    fn free_falling_snow_is_reported_not_moved() {
+        let mut g = Grid::new(16, 32);
+        g.free_fall_to_flakes = true;
+        g.set(5, 3, SNOW);
+        g.set(9, 3, PACKED); // user-made packed snow keeps falling as cells
+        g.step();
+        assert_eq!(g.fell, vec![(5, 3)]);
+        assert_eq!(g.count(SNOW), 0);
+        assert_eq!(g.count(PACKED), 1);
+        // Resting on something: stays a cell.
+        g.fell.clear();
+        g.set(2, 31, SNOW);
+        g.step();
+        assert!(g.fell.is_empty());
     }
 
     #[test]

@@ -112,6 +112,17 @@ fn ground_y(grid: &Grid, cell: f32, x: f32, from_row: i32) -> f32 {
 pub fn step_balls(balls: &mut [Ball], grid: &Grid, cell: f32, dt: f32) -> Vec<(usize, u8)> {
     let mut hits = Vec::new();
     let wpx = grid.w as f32 * cell;
+    // A recognised snowman keeps its shape: its slow balls hold their x
+    // (balls stacked on spheres are otherwise an unstable equilibrium and
+    // roll off after a few seconds). They still fall if the ground goes,
+    // and a snowball hit (velocity) knocks them loose.
+    let lock_x: Vec<Option<f32>> = balls
+        .iter()
+        .map(|b| {
+            (b.in_snowman && !b.held && !b.thrown && b.vx.abs() < 60.0 && b.vy.abs() < 200.0)
+                .then_some(b.x)
+        })
+        .collect();
     for (i, b) in balls.iter_mut().enumerate() {
         b.wobble = (b.wobble - dt).max(0.0);
         if b.held {
@@ -222,6 +233,14 @@ pub fn step_balls(balls: &mut [Ball], grid: &Grid, cell: f32, dt: f32) -> Vec<(u
                 b.vx -= tx * vt * 0.3 * wb;
                 b.vy -= ty * vt * 0.3 * wb;
             }
+        }
+    }
+    for (b, lx) in balls.iter_mut().zip(&lock_x) {
+        if let Some(x) = *lx
+            && b.vx.abs() < 60.0
+        {
+            b.x = x;
+            b.vx = 0.0;
         }
     }
     // A thrown ball can hit the ground and another ball in the same step:
@@ -349,6 +368,34 @@ mod tests {
             step_balls(&mut balls, &grid, cell, 1.0 / 60.0);
         }
         assert!(balls[0].x > gx * cell + 20.0, "x {}", balls[0].x);
+    }
+
+    /// Regression: three-ball snowmen fell apart after a few seconds.
+    #[test]
+    fn three_ball_snowman_stays_up() {
+        let grid = Grid::new(100, 100);
+        let cell = 4.0;
+        let floor = 400.0;
+        let mut balls = vec![
+            Ball::new(200.0, floor - 45.0, 45.0),
+            Ball::new(201.5, floor - 90.0 - 32.0, 32.0),
+            Ball::new(199.0, floor - 154.0 - 21.0, 21.0),
+        ];
+        for step in 0..1200 {
+            step_balls(&mut balls, &grid, cell, 1.0 / 60.0);
+            if step % 20 == 0 {
+                let found = find_snowmen(&balls);
+                for b in balls.iter_mut() {
+                    b.in_snowman = false;
+                }
+                for c in &found {
+                    for &i in c {
+                        balls[i].in_snowman = true;
+                    }
+                }
+            }
+        }
+        assert_eq!(find_snowmen(&balls), vec![vec![0, 1, 2]]);
     }
 
     #[test]

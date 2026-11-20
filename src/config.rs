@@ -26,6 +26,10 @@ pub struct Config {
     pub repeat: bool,
     pub music_reactive: bool,
     pub critter: bool,
+    /// Penguins per monitor (when `critter` is on).
+    pub penguins: u32,
+    /// Penguin size multiplier (0.5 ..= 3.0).
+    pub penguin_size: f32,
     pub string_lights: bool,
     pub sparkles: bool,
     pub aurora: bool,
@@ -52,6 +56,8 @@ impl Default for Config {
             repeat: false,
             music_reactive: true,
             critter: false,
+            penguins: 1,
+            penguin_size: 1.0,
             string_lights: false,
             sparkles: false,
             aurora: false,

@@ -4,6 +4,32 @@ All notable changes to snowdesk are listed here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- Several penguins (1–12 per monitor) and a size setting (0.5×–3×), in the
+  Snow tab and as `penguins` / `penguin_size` in config.toml.
+- Penguin interaction in play mode: click to make one hop away, drag to carry
+  it, flick to throw it, snowball it to knock it over. Penguins flap while in
+  the air, lie down when knocked over, and walk along window tops.
+- Stacking by hand: while rolling a snowball, move the pointer up to lift it,
+  then release it over a bigger ball. Released balls snap onto the centre of
+  the ball below.
+- README screenshots and a play-mode GIF.
+
+### Fixed
+
+- Snow sliding off window ledges fell as grid cells that ignored the
+  max pile height, so piles under window edges grew without limit in heavy
+  snow. It now drifts down as flakes again. Piles on window tops are capped at
+  about a third of the max height.
+- Recognised snowmen no longer fall apart after a few seconds (balls stacked
+  on spheres slowly rolled off).
+- A snowball rolled underneath a window jumped onto the window's top edge;
+  it now stays on the surface nearest the pointer.
+- Penguin body parts were not scaled on HiDPI screens.
+
 ## [0.1.0] - 2026-11-20
 
 First public release.

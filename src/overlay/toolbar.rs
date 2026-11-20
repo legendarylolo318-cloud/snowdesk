@@ -85,7 +85,16 @@ pub fn layout(screen_w: f32, scale: f32) -> Layout {
     let pad = 8.0 * scale;
     let total = n as f32 * (s + gap) - gap + (g.len() - 1) as f32 * sep;
     let mut x = ((screen_w - total) / 2.0).max(pad);
-    let y = 14.0 * scale + pad;
+    #[allow(unused_mut)]
+    let mut y = 14.0 * scale + pad;
+    // Recording aid (debug builds): move the bar clear of a desktop panel.
+    #[cfg(debug_assertions)]
+    if let Some(dy) = std::env::var("SNOWDESK_TOOLBAR_DY")
+        .ok()
+        .and_then(|v| v.parse::<f32>().ok())
+    {
+        y += dy;
+    }
     let mut items = Vec::new();
     for (gi, grp) in g.iter().enumerate() {
         if gi > 0 {

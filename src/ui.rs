@@ -147,6 +147,11 @@ fn read_cfg(ui: &Panel, base: &Config) -> Config {
         windows_collide: ui.get_windows_collide(),
         music_reactive: ui.get_music_reactive(),
         critter: ui.get_critter(),
+        penguins: ui
+            .get_penguins()
+            .round()
+            .clamp(1.0, crate::sim::world::MAX_PENGUINS as f32) as u32,
+        penguin_size: ui.get_penguin_size().clamp(0.5, 3.0),
         string_lights: ui.get_lights(),
         sparkles: ui.get_sparkles(),
         aurora: ui.get_aurora(),
@@ -172,6 +177,8 @@ fn apply_cfg(ui: &Panel, c: &Config) {
     ui.set_windows_collide(c.windows_collide);
     ui.set_music_reactive(c.music_reactive);
     ui.set_critter(c.critter);
+    ui.set_penguins(c.penguins.clamp(1, crate::sim::world::MAX_PENGUINS) as f32);
+    ui.set_penguin_size(c.penguin_size.clamp(0.5, 3.0));
     ui.set_lights(c.string_lights);
     ui.set_sparkles(c.sparkles);
     ui.set_aurora(c.aurora);
