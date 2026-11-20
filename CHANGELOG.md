@@ -4,6 +4,19 @@ All notable changes to snowdesk are listed here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+
+- Windows: the overlay failed to start ("tried to access window handle
+  outside of the main thread"), so no snow appeared. The overlay thread now
+  reads window handles in a thread-independent way, which also makes the
+  click-through windows visible.
+- Windows: snowdesk always showed "auto-paused (fullscreen app)". Its own
+  monitor-sized overlay made Windows report a fullscreen app. Fullscreen
+  detection now checks whether the foreground window covers its monitor, and
+  pauses only that monitor.
+
 ## [0.2.0] - 2026-11-20
 
 ### Added

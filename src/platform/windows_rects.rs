@@ -1,7 +1,5 @@
 //! Windows: EnumWindows + DWMWA_EXTENDED_FRAME_BOUNDS, GetCursorPos and
-//! SHQueryUserNotificationState for fullscreen detection.
-//! NOTE: written against windows-sys; not compiled/tested on a Windows host
-//! in the Linux development environment.
+//! foreground-window-covers-monitor fullscreen detection.
 
 use super::{Shared, Snapshot, WinInfo};
 use crate::sim::Rect;
@@ -11,10 +9,14 @@ use windows_sys::Win32::Foundation::{HWND, LPARAM, POINT, RECT};
 use windows_sys::Win32::Graphics::Dwm::{
     DWMWA_CLOAKED, DWMWA_EXTENDED_FRAME_BOUNDS, DwmGetWindowAttribute,
 };
+use windows_sys::Win32::Graphics::Gdi::{
+    GetMonitorInfoW, MONITOR_DEFAULTTONULL, MONITORINFO, MONITORINFOEXW, MonitorFromWindow,
+};
 use windows_sys::Win32::UI::Shell::SHQueryUserNotificationState;
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    EnumWindows, GWL_EXSTYLE, GetCursorPos, GetForegroundWindow, GetWindowLongW,
-    GetWindowTextLengthW, GetWindowThreadProcessId, IsIconic, IsWindowVisible, WS_EX_TOOLWINDOW,
+    EnumWindows, GWL_EXSTYLE, GWL_STYLE, GetClassNameW, GetCursorPos, GetForegroundWindow,
+    GetWindowLongW, GetWindowRect, GetWindowTextLengthW, GetWindowThreadProcessId, IsIconic,
+    IsWindowVisible, IsZoomed, WS_CAPTION, WS_EX_TOOLWINDOW,
 };
 use windows_sys::core::BOOL;
 
@@ -73,22 +75,73 @@ unsafe extern "system" fn enum_proc(hwnd: HWND, lp: LPARAM) -> BOOL {
     1
 }
 
-fn fullscreen_busy() -> bool {
+/// The monitor (by device name, e.g. `\\.\DISPLAY1`, the same name the
+/// overlay uses) covered by the foreground window, if that window is a
+/// fullscreen app.
+///
+/// `SHQueryUserNotificationState` is not used for this: Windows reports
+/// QUNS_BUSY for any borderless, monitor-sized, topmost window, which is
+/// exactly what our own overlay is, so snowdesk would pause itself.
+fn fullscreen_monitor() -> Option<String> {
     unsafe {
-        let mut state = 0i32;
-        if SHQueryUserNotificationState(&mut state) != 0 {
-            return false;
-        }
-        // QUNS_BUSY = 2, RUNNING_D3D_FULL_SCREEN = 3, PRESENTATION_MODE = 4
-        if !(2..=4).contains(&state) {
-            return false;
-        }
-        // Make sure the foreground window isn't ours.
         let fg = GetForegroundWindow();
+        if fg.is_null() {
+            return None;
+        }
         let mut pid = 0u32;
         GetWindowThreadProcessId(fg, &mut pid);
-        pid != std::process::id()
+        if pid == std::process::id() {
+            return None;
+        }
+        // The desktop (also hosts wallpaper apps) and the taskbar.
+        let mut cls = [0u16; 64];
+        let n = GetClassNameW(fg, cls.as_mut_ptr(), cls.len() as i32).max(0) as usize;
+        let cls = String::from_utf16_lossy(&cls[..n]);
+        if matches!(
+            cls.as_str(),
+            "Progman" | "WorkerW" | "Shell_TrayWnd" | "Shell_SecondaryTrayWnd"
+        ) {
+            return None;
+        }
+        // A maximized window with a title bar is not fullscreen, even with
+        // an auto-hidden taskbar.
+        let style = GetWindowLongW(fg, GWL_STYLE) as u32;
+        if IsZoomed(fg) != 0 && style & WS_CAPTION == WS_CAPTION {
+            return None;
+        }
+        let mon = MonitorFromWindow(fg, MONITOR_DEFAULTTONULL);
+        if mon.is_null() {
+            return None;
+        }
+        let mut mi: MONITORINFOEXW = std::mem::zeroed();
+        mi.monitorInfo.cbSize = std::mem::size_of::<MONITORINFOEXW>() as u32;
+        if GetMonitorInfoW(mon, &mut mi as *mut _ as *mut MONITORINFO) == 0 {
+            return None;
+        }
+        let mut r: RECT = std::mem::zeroed();
+        if GetWindowRect(fg, &mut r) == 0 {
+            return None;
+        }
+        let m = mi.monitorInfo.rcMonitor;
+        let covers =
+            r.left <= m.left && r.top <= m.top && r.right >= m.right && r.bottom >= m.bottom;
+        if !covers {
+            return None;
+        }
+        let len = mi
+            .szDevice
+            .iter()
+            .position(|&c| c == 0)
+            .unwrap_or(mi.szDevice.len());
+        Some(String::from_utf16_lossy(&mi.szDevice[..len]))
     }
+}
+
+/// Presentation mode ("do not disturb" for slideshows) pauses everywhere.
+fn presentation_mode() -> bool {
+    let mut state = 0i32;
+    // QUNS_PRESENTATION_MODE = 4
+    unsafe { SHQueryUserNotificationState(&mut state) == 0 && state == 4 }
 }
 
 pub fn run(shared: Arc<Shared>) {
@@ -128,7 +181,8 @@ pub fn run(shared: Arc<Shared>) {
                 snap.generation += 1;
             }
             snap.windows = ctx.wins;
-            snap.fullscreen_any = fullscreen_busy();
+            snap.fullscreen_monitors = fullscreen_monitor().into_iter().collect();
+            snap.fullscreen_any = presentation_mode();
             publish = true;
         }
         if publish {

@@ -267,6 +267,17 @@ pub struct Windows {
     list: Vec<(MonSpec, Arc<Window>)>,
 }
 
+/// What wgpu gets to build a surface from. This runs on the overlay thread,
+/// so on Windows the window must be wrapped to hand out its handle there.
+#[cfg(windows)]
+fn surface_target(w: &Arc<Window>) -> super::windows::AnyThread {
+    super::windows::AnyThread(w.clone())
+}
+#[cfg(not(windows))]
+fn surface_target(w: &Arc<Window>) -> Arc<Window> {
+    w.clone()
+}
+
 fn attach(
     engine: &mut Option<Engine>,
     ctx: &OverlayCtx,
@@ -275,13 +286,13 @@ fn attach(
 ) -> Result<()> {
     match engine {
         None => {
-            let (gpu, surf) = Gpu::new(|inst| Ok(inst.create_surface(window.clone())?))?;
+            let (gpu, surf) = Gpu::new(|inst| Ok(inst.create_surface(surface_target(window))?))?;
             let mut e = Engine::new(Arc::new(gpu), ctx.clone());
             e.add_monitor(spec, surf)?;
             *engine = Some(e);
         }
         Some(e) => {
-            let surf = e.gpu().instance.create_surface(window.clone())?;
+            let surf = e.gpu().instance.create_surface(surface_target(window))?;
             e.add_monitor(spec, surf)?;
         }
     }
