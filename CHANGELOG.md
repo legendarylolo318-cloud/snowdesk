@@ -4,7 +4,7 @@ All notable changes to snowdesk are listed here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.2.1] - 2026-11-20
 
 ### Fixed
 
@@ -161,5 +161,6 @@ Measured on Hyprland with two monitors (2560×1440 and 1920×1080), Radeon RX
 - The music library keeps a tag cache, so rescans of large folders only read
   new or changed files. The track list is virtualized.
 
+[0.2.1]: https://github.com/legendarylolo318-cloud/snowdesk/releases/tag/v0.2.1
 [0.2.0]: https://github.com/legendarylolo318-cloud/snowdesk/releases/tag/v0.2.0
 [0.1.0]: https://github.com/legendarylolo318-cloud/snowdesk/releases/tag/v0.1.0
