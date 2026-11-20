@@ -30,6 +30,17 @@ All notable changes to snowdesk are listed here. The format follows
   it now stays on the surface nearest the pointer.
 - Penguin body parts were not scaled on HiDPI screens.
 
+### Performance
+
+- Wayland: a monitor blanked by a fullscreen app or game, or disabled in the
+  panel, gives its swapchain memory back (VRAM 105 → 75 MB with one of two
+  monitors covered, 28 MB with both), so games get the memory.
+- Cursor wind polls the pointer at 60 Hz only while it moves, then 10 Hz:
+  the Hyprland feed went from 176 to 30 wakeups/s and ~0 % CPU with the mouse
+  still.
+- Freed heap is returned to the OS after startup and music rescans, and glibc
+  is limited to two malloc arenas: private RAM 20.5 → 14.6–17.8 MB.
+
 ## [0.1.0] - 2026-11-20
 
 First public release.

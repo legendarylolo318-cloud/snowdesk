@@ -135,7 +135,13 @@ pub struct MonitorRenderer {
     instances: wgpu::Buffer,
     /// Reused list of dirty grid rects (no per-frame allocation).
     dirty: Vec<(usize, usize, usize, usize)>,
+    /// Swapchain shrunk to a tiny size while the monitor is blanked.
+    asleep: bool,
 }
+
+/// Swapchain side while blanked: divisible by every integer buffer scale up
+/// to 4, so a Wayland compositor accepts it.
+const SLEEP_SIZE: u32 = 12;
 
 impl MonitorRenderer {
     pub fn new(
@@ -298,6 +304,7 @@ impl MonitorRenderer {
             sprite_pipe,
             instances,
             dirty: Vec::new(),
+            asleep: false,
         })
     }
 
@@ -342,7 +349,9 @@ impl MonitorRenderer {
     pub fn resize(&mut self, w: u32, h: u32, grid: &mut Grid) {
         self.config.width = w.max(1);
         self.config.height = h.max(1);
-        self.surface.configure(&self.gpu.device, &self.config);
+        if !self.asleep {
+            self.surface.configure(&self.gpu.device, &self.config);
+        }
         if self.grid_dims != (grid.w, grid.h) {
             let (t, b) = Self::make_grid(&self.gpu, &self.layout, &self.uniforms, grid);
             self.grid_tex = t;
@@ -363,6 +372,10 @@ impl MonitorRenderer {
         aurora: f32,
         sparkle: bool,
     ) -> bool {
+        if self.asleep {
+            self.asleep = false;
+            self.surface.configure(&self.gpu.device, &self.config);
+        }
         let q = &self.gpu.queue;
         // Upload only the dirty chunks.
         let gw = grid.w as u32;
@@ -470,6 +483,25 @@ impl MonitorRenderer {
     /// Present a fully transparent frame (used when pausing so no stale snow
     /// stays on screen).
     pub fn blank(&mut self) {
+        self.present_clear();
+    }
+
+    /// Blank and give the swapchain memory back: the surface is reconfigured
+    /// to a tiny transparent buffer until the next `render`. Only for
+    /// surfaces whose size is free (Wayland); X11 and Windows swapchains
+    /// must match the window size.
+    pub fn blank_and_sleep(&mut self) {
+        if !self.asleep {
+            self.asleep = true;
+            let mut tiny = self.config.clone();
+            tiny.width = SLEEP_SIZE;
+            tiny.height = SLEEP_SIZE;
+            self.surface.configure(&self.gpu.device, &tiny);
+        }
+        self.present_clear();
+    }
+
+    fn present_clear(&mut self) {
         use wgpu::CurrentSurfaceTexture as C;
         let frame = match self.surface.get_current_texture() {
             C::Success(f) | C::Suboptimal(f) => f,

@@ -116,6 +116,41 @@ impl Shared {
     }
 }
 
+/// Cursor polling rate: fast while the pointer moves, slow once it has been
+/// still for a moment (movement is picked up within 100 ms, which is
+/// invisible for cursor wind, and an idle desktop stops polling at 60 Hz).
+pub struct CursorPacer {
+    last_move: std::time::Instant,
+    last: Option<(f32, f32)>,
+}
+
+impl CursorPacer {
+    pub fn new() -> Self {
+        Self {
+            last_move: std::time::Instant::now(),
+            last: None,
+        }
+    }
+
+    /// Record a sample; returns true if the cursor moved.
+    pub fn sample(&mut self, c: Option<(f32, f32)>) -> bool {
+        let moved = c != self.last;
+        if moved {
+            self.last = c;
+            self.last_move = std::time::Instant::now();
+        }
+        moved
+    }
+
+    pub fn interval(&self) -> std::time::Duration {
+        if self.last_move.elapsed() < std::time::Duration::from_millis(500) {
+            std::time::Duration::from_millis(15)
+        } else {
+            std::time::Duration::from_millis(100)
+        }
+    }
+}
+
 /// Start the best available source for this session.
 pub fn start() -> Arc<Shared> {
     let shared = Shared::new();
@@ -153,6 +188,26 @@ pub fn start() -> Arc<Shared> {
     shared
 }
 
+/// Give freed heap memory back to the OS. glibc keeps memory freed after
+/// big one-off allocations (GPU setup, shader compilation, font loading,
+/// library scans) mapped; this returns it. A no-op elsewhere.
+pub fn trim_heap() {
+    #[cfg(target_os = "linux")]
+    unsafe {
+        libc::malloc_trim(0);
+    }
+}
+
+/// Limit glibc to a couple of malloc arenas. By default each thread that
+/// allocates can get its own arena; snowdesk has ~15 mostly idle threads,
+/// so that only fragments memory. Call first thing in `main`.
+pub fn limit_malloc_arenas() {
+    #[cfg(target_os = "linux")]
+    unsafe {
+        libc::mallopt(libc::M_ARENA_MAX, 2);
+    }
+}
+
 /// Local wall-clock hour (0–23), for the night-time aurora.
 pub fn local_hour() -> u32 {
     #[cfg(target_os = "linux")]
@@ -173,6 +228,18 @@ pub fn local_hour() -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cursor_pacer_slows_down_when_still() {
+        let mut p = CursorPacer::new();
+        assert!(p.sample(Some((1.0, 2.0))));
+        assert_eq!(p.interval(), std::time::Duration::from_millis(15));
+        p.last_move -= std::time::Duration::from_secs(1);
+        assert!(!p.sample(Some((1.0, 2.0))));
+        assert_eq!(p.interval(), std::time::Duration::from_millis(100));
+        assert!(p.sample(Some((5.0, 2.0))));
+        assert_eq!(p.interval(), std::time::Duration::from_millis(15));
+    }
 
     fn r(x: f32, y: f32, w: f32, h: f32) -> Rect {
         Rect { x, y, w, h }

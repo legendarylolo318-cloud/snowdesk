@@ -143,6 +143,8 @@ impl Engine {
             tracks: self.tracks().to_vec(),
             current: self.current,
         });
+        // Scanning reads every file's tags: give the scratch memory back.
+        crate::platform::trim_heap();
     }
 
     fn open_output(&mut self) -> bool {

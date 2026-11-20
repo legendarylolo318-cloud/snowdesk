@@ -151,12 +151,13 @@ pub fn run(shared: Arc<Shared>) {
     let mut buf = [0u8; 4096];
     let mut last_refresh = Instant::now();
     let mut last_cursor = Instant::now();
+    let mut pacer = super::CursorPacer::new();
     let mut dirty = false;
     while !shared.stopped() {
         let active = shared.is_active();
         let want_cursor = active && shared.want_cursor();
         let tick = if want_cursor {
-            Duration::from_millis(16)
+            pacer.interval()
         } else if active {
             Duration::from_millis(200)
         } else {
@@ -196,9 +197,10 @@ pub fn run(shared: Arc<Shared>) {
             refresh(&mut snap);
             publish = true;
         }
-        if want_cursor && last_cursor.elapsed() >= Duration::from_millis(15) {
+        if want_cursor && last_cursor.elapsed() >= pacer.interval() {
             last_cursor = Instant::now();
             let c = cursor_pos();
+            pacer.sample(c);
             if c != snap.cursor {
                 snap.cursor = c;
                 publish = true;

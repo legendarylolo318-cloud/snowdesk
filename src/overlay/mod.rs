@@ -225,6 +225,10 @@ pub struct Engine {
     ptr_hist: VecDeque<(Instant, f32, f32)>,
     pending_play: Option<bool>,
     quit: bool,
+    /// Blanked monitors release their swapchain (Wayland only).
+    pub shrink_when_blank: bool,
+    /// Next time to return freed heap memory to the OS.
+    next_trim: Instant,
 }
 
 impl Engine {
@@ -256,6 +260,8 @@ impl Engine {
             right_down: false,
             ptr_hist: VecDeque::new(),
             pending_play: None,
+            shrink_when_blank: false,
+            next_trim: now + Duration::from_secs(5),
             penguin: None,
             #[cfg(debug_assertions)]
             demo: demo::Demo::from_env(),
@@ -766,6 +772,12 @@ impl Engine {
             (self.next_frame + iv).max(now)
         };
 
+        if now >= self.next_trim {
+            // 5 s after start (GPU setup and shader compilation are done),
+            // then every 10 minutes.
+            self.next_trim = now + Duration::from_secs(600);
+            platform::trim_heap();
+        }
         if self.aurora_checked.elapsed() > Duration::from_secs(60) {
             self.aurora_checked = now;
             let h = platform::local_hour();
@@ -800,7 +812,13 @@ impl Engine {
             if off {
                 if !m.blanked {
                     m.blanked = true;
-                    m.renderer.blank();
+                    // A fullscreen game or a disabled monitor: hand the
+                    // swapchain memory back where the platform allows it.
+                    if self.shrink_when_blank {
+                        m.renderer.blank_and_sleep();
+                    } else {
+                        m.renderer.blank();
+                    }
                 }
                 continue;
             }

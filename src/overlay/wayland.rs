@@ -193,6 +193,7 @@ impl App {
             let gpu = Arc::new(gpu);
             self.gpu = Some(gpu.clone());
             let mut e = Engine::new(gpu, self.ctx.clone());
+            e.shrink_when_blank = true;
             e.add_monitor(spec, surf)?;
             self.engine = Some(e);
         }

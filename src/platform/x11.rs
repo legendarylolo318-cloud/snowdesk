@@ -119,6 +119,7 @@ pub fn run(shared: Arc<Shared>) {
         ..Default::default()
     };
     let mut last = Instant::now() - Duration::from_secs(10);
+    let mut pacer = super::CursorPacer::new();
     while !shared.stopped() {
         let active = shared.is_active();
         let want_cursor = active && shared.want_cursor();
@@ -138,6 +139,7 @@ pub fn run(shared: Arc<Shared>) {
                 .ok()
                 .and_then(|r| r.reply().ok())
                 .map(|r| (r.root_x as f32, r.root_y as f32));
+            pacer.sample(p);
             if p != snap.cursor {
                 snap.cursor = p;
                 publish = true;
@@ -148,12 +150,12 @@ pub fn run(shared: Arc<Shared>) {
         if publish {
             shared.publish(snap.clone());
         }
-        std::thread::sleep(Duration::from_millis(if want_cursor {
-            16
+        std::thread::sleep(if want_cursor {
+            pacer.interval()
         } else if active {
-            100
+            Duration::from_millis(100)
         } else {
-            500
-        }));
+            Duration::from_millis(500)
+        });
     }
 }

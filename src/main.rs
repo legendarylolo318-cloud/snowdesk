@@ -59,6 +59,7 @@ fn attach_console() {
 }
 
 fn main() {
+    platform::limit_malloc_arenas();
     let args: Vec<String> = std::env::args().skip(1).collect();
     #[cfg(windows)]
     if !args.is_empty() {

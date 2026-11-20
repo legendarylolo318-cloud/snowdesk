@@ -97,6 +97,7 @@ pub fn run(shared: Arc<Shared>) {
         ..Default::default()
     };
     let mut last_enum: Option<std::time::Instant> = None;
+    let mut pacer = super::CursorPacer::new();
     while !shared.stopped() {
         let active = shared.is_active();
         let want_cursor = active && shared.want_cursor();
@@ -104,6 +105,7 @@ pub fn run(shared: Arc<Shared>) {
         if want_cursor {
             let mut p = POINT { x: 0, y: 0 };
             let c = unsafe { (GetCursorPos(&mut p) != 0).then_some((p.x as f32, p.y as f32)) };
+            pacer.sample(c);
             if c != snap.cursor {
                 snap.cursor = c;
                 publish = true;
@@ -134,7 +136,7 @@ pub fn run(shared: Arc<Shared>) {
         }
         // Poll fast only for cursor wind; otherwise mostly sleep.
         let ms = if want_cursor {
-            16
+            pacer.interval().as_millis() as u64
         } else if active {
             100
         } else {
