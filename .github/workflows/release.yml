@@ -1,0 +1,104 @@
+name: release
+
+# On a version tag: build the AppImage and the Windows .exe from a clean
+# checkout, then publish a GitHub release with SHA256 checksums and the
+# matching CHANGELOG section as notes.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  appimage:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: System libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwayland-dev libxkbcommon-dev libasound2-dev \
+            libx11-dev libxcb1-dev libfontconfig1-dev pkg-config \
+            libfuse2 desktop-file-utils patchelf
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --locked
+      - run: cargo build --release --locked
+      - name: Build AppImage
+        run: |
+          curl -fsSL -o linuxdeploy https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
+          chmod +x linuxdeploy
+          # Use the host's ALSA (its plugin dirs differ per distro, e.g.
+          # pipewire-alsa on Arch) and xkbcommon; Vulkan, Wayland and GL
+          # are loaded from the host at runtime anyway.
+          ./linuxdeploy --appimage-extract-and-run \
+            --appdir AppDir \
+            --executable target/release/snowdesk \
+            --desktop-file packaging/snowdesk.desktop \
+            --icon-file packaging/snowdesk.png \
+            --exclude-library 'libasound.so*' \
+            --exclude-library 'libxkbcommon.so*' \
+            --output appimage
+          ls -la *.AppImage
+          mv snowdesk-*.AppImage snowdesk-${VERSION}-x86_64.AppImage
+        env:
+          LINUXDEPLOY_OUTPUT_VERSION: ${{ github.ref_name }}
+          VERSION: ${{ github.ref_name }}
+      - name: Smoke test
+        run: ./snowdesk-${{ github.ref_name }}-x86_64.AppImage --appimage-extract-and-run --help
+      - uses: actions/upload-artifact@v4
+        with:
+          name: snowdesk-appimage
+          path: snowdesk-*.AppImage
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --locked
+      - run: cargo build --release --locked
+      - shell: pwsh
+        run: Copy-Item target\release\snowdesk.exe "snowdesk-${{ github.ref_name }}-windows-x86_64.exe"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: snowdesk-windows
+          path: snowdesk-*.exe
+
+  publish:
+    needs: [appimage, windows]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Checksums and notes
+        run: |
+          cd dist
+          sha256sum snowdesk-* > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+          cd ..
+          ver="${GITHUB_REF_NAME#v}"
+          awk -v v="$ver" '
+            $0 ~ "^## \\[" v "\\]" { on = 1; next }
+            on && /^## \[/ { exit }
+            on { print }
+          ' CHANGELOG.md > notes.md
+          printf '\n### Checksums (SHA256)\n\n```\n' >> notes.md
+          cat dist/SHA256SUMS.txt >> notes.md
+          printf '```\n\n[![Made with Slint](https://raw.githubusercontent.com/slint-ui/slint/master/logo/MadeWithSlint-logo-whitebg.png)](https://slint.dev)\n' >> notes.md
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --title "snowdesk $GITHUB_REF_NAME" \
+            --notes-file notes.md

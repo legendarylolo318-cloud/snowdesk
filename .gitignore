@@ -1,0 +1,32 @@
+/target
+**/*.rs.bk
+.DS_Store
+
+# Never commit audio. Users drop their own files in music/.
+music/*
+!music/.gitkeep
+!music/README.txt
+/musicleave out of github/
+*.mp3
+*.ogg
+*.oga
+*.flac
+*.wav
+*.m4a
+*.aac
+*.opus
+*.wma
+*.aif
+*.aiff
+*.alac
+*.mka
+*.ape
+*.wv
+
+# Build / packaging output
+/AppDir/
+/dist/
+*.AppImage
+*.zsync
+linuxdeploy*
+SHA256SUMS*

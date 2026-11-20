@@ -1,0 +1,416 @@
+// Tokyo Night control panel.
+import { AboutSlint, ListView, ScrollView } from "std-widgets.slint";
+
+global Theme {
+    out property <color> bg: #1a1b26;
+    out property <color> surface: #24283b;
+    out property <color> surface2: #2f3549;
+    out property <color> accent: #7aa2f7;
+    out property <color> text: #c0caf5;
+    out property <color> muted: #737aa2;
+    out property <color> urgent: #f7768e;
+    out property <color> good: #9ece6a;
+}
+
+export struct MonitorRow { name: string, enabled: bool }
+export struct TrackRow { title: string, artist: string, length: string, playing: bool }
+
+component Btn inherits Rectangle {
+    in property <string> label;
+    in property <bool> active: false;
+    in property <bool> danger: false;
+    callback clicked();
+    height: 32px;
+    min-width: 36px;
+    border-radius: 8px;
+    background: ta.pressed ? Theme.accent.darker(0.2) : active ? Theme.accent : ta.has-hover ? Theme.surface2 : Theme.surface;
+    Text {
+        text: root.label;
+        color: root.active ? Theme.bg : root.danger ? Theme.urgent : Theme.text;
+        font-size: 13px;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+    ta := TouchArea { clicked => { root.clicked(); } }
+}
+
+component Sw inherits Rectangle {
+    in-out property <bool> checked;
+    in property <string> label;
+    callback toggled(bool);
+    height: 28px;
+    HorizontalLayout {
+        spacing: 10px;
+        alignment: start;
+        Rectangle {
+            width: 38px; height: 20px; y: 4px;
+            border-radius: 10px;
+            background: root.checked ? Theme.accent : Theme.surface2;
+            Rectangle {
+                width: 14px; height: 14px; border-radius: 7px;
+                y: 3px;
+                x: root.checked ? 21px : 3px;
+                background: Theme.text;
+                animate x { duration: 120ms; }
+            }
+        }
+        Text { text: root.label; color: Theme.text; font-size: 13px; vertical-alignment: center; }
+    }
+    TouchArea { clicked => { root.checked = !root.checked; root.toggled(root.checked); } }
+}
+
+component Sld inherits Rectangle {
+    in-out property <float> value;
+    in property <float> minimum: 0;
+    in property <float> maximum: 1;
+    callback edited(float);
+    height: 22px;
+    property <float> frac: maximum > minimum ? (value - minimum) / (maximum - minimum) : 0;
+    Rectangle {
+        y: 9px; height: 4px; border-radius: 2px; background: Theme.surface2;
+        Rectangle { x: 0px; width: parent.width * root.frac; border-radius: 2px; background: Theme.accent; }
+    }
+    Rectangle {
+        width: 14px; height: 14px; border-radius: 7px; y: 4px;
+        x: (root.width - 14px) * root.frac;
+        background: Theme.text;
+    }
+    ta := TouchArea {
+        function set() {
+            root.value = root.minimum + (root.maximum - root.minimum) * max(0, min(1, self.mouse-x / root.width));
+            root.edited(root.value);
+        }
+        pointer-event(e) => { if (e.button == PointerEventButton.left && e.kind == PointerEventKind.down) { set(); } }
+        moved => { if (self.pressed) { set(); } }
+    }
+}
+
+// Seek bar: follows `position` until dragged; seeks once on release.
+// (Writing to `value` like Sld does would break the binding to `position`.)
+component SeekBar inherits Rectangle {
+    in property <float> position;
+    in property <float> duration;
+    callback seek(float);
+    height: 22px;
+    property <float> drag-frac: 0;
+    property <float> frac: ta.pressed ? drag-frac : (duration > 0 ? max(0, min(1, position / duration)) : 0);
+    Rectangle {
+        y: 9px; height: 4px; border-radius: 2px; background: Theme.surface2;
+        Rectangle { x: 0px; width: parent.width * root.frac; border-radius: 2px; background: Theme.accent; }
+    }
+    Rectangle {
+        width: 14px; height: 14px; border-radius: 7px; y: 4px;
+        x: (root.width - 14px) * root.frac;
+        background: Theme.text;
+    }
+    ta := TouchArea {
+        enabled: root.duration > 0;
+        function track() {
+            root.drag-frac = max(0, min(1, self.mouse-x / root.width));
+        }
+        pointer-event(e) => {
+            if (e.button == PointerEventButton.left) {
+                if (e.kind == PointerEventKind.down) { track(); }
+                if (e.kind == PointerEventKind.up) { root.seek(root.drag-frac); }
+            }
+        }
+        moved => { if (self.pressed) { track(); } }
+    }
+}
+
+component Row inherits HorizontalLayout {
+    in property <string> label;
+    in property <string> hint;
+    spacing: 10px;
+    Text { text: root.label; color: Theme.muted; font-size: 12px; width: 120px; vertical-alignment: center; }
+    @children
+}
+
+component TabBtn inherits Rectangle {
+    in property <string> label;
+    in property <bool> active;
+    callback clicked();
+    height: 34px;
+    border-radius: 8px;
+    background: active ? Theme.surface : transparent;
+    Text { text: root.label; color: root.active ? Theme.accent : Theme.muted; font-size: 14px; horizontal-alignment: center; vertical-alignment: center; }
+    TouchArea { clicked => { root.clicked(); } }
+}
+
+export component Panel inherits Window {
+    title: "snowdesk";
+    icon: @image-url("snow.png");
+    background: Theme.bg;
+    min-width: 720px;
+    min-height: 560px;
+    preferred-width: 780px;
+    preferred-height: 640px;
+
+    in-out property <float> intensity: 0.35;
+    in-out property <float> flake-size: 1.0;
+    in-out property <float> wind: 0.1;
+    in-out property <float> max-pile: 0.12;
+    in-out property <float> melt-rate: 0.0;
+    in-out property <int> fps-index: 1;
+    in-out property <bool> gusts: true;
+    in-out property <bool> cursor-wind: true;
+    in-out property <bool> windows-collide: true;
+    in-out property <bool> music-reactive: true;
+    in-out property <bool> critter: false;
+    in-out property <bool> lights: false;
+    in-out property <bool> sparkles: false;
+    in-out property <bool> aurora: false;
+    in-out property <bool> restore-scene: false;
+    in-out property <bool> autostart: false;
+    in-out property <[MonitorRow]> monitors;
+
+    in-out property <bool> play-mode: false;
+    in-out property <bool> paused: false;
+    in property <bool> auto-paused: false;
+    in-out property <int> tool-index: 0;
+    in-out property <float> radius: 28;
+    in-out property <string> error-text: "";
+
+    in property <[TrackRow]> tracks;
+    in property <string> now-title: "";
+    in property <string> now-artist: "";
+    in property <string> now-album: "";
+    in property <image> now-art;
+    in property <bool> has-art: false;
+    in property <float> position: 0;
+    in property <float> duration: 0;
+    in property <string> position-text: "0:00";
+    in property <string> duration-text: "0:00";
+    in property <bool> playing: false;
+    in-out property <bool> shuffle: false;
+    in-out property <bool> repeat: false;
+    in-out property <float> volume: 0.6;
+    in property <string> music-dir: "";
+    in property <string> version: "";
+    in property <string> config-dir: "";
+
+    callback config-edited();
+    callback toggle-play();
+    callback toggle-pause();
+    callback clear();
+    callback undo();
+    callback redo();
+    callback tool-selected(int);
+    callback radius-edited(float);
+    callback stamp-snowman();
+    callback mountains();
+    callback save-scene();
+    callback load-scene();
+    callback open-music-folder();
+    callback play-index(int);
+    callback play-pause();
+    callback next();
+    callback prev();
+    callback seek(float);
+    callback volume-edited(float);
+    callback shuffle-edited(bool);
+    callback repeat-edited(bool);
+    callback monitor-toggled(int, bool);
+    callback dismiss-error();
+
+    property <int> tab: 0;
+
+    VerticalLayout {
+        padding: 16px;
+        spacing: 12px;
+
+        HorizontalLayout {
+            spacing: 10px;
+            Text { text: "❄ snowdesk"; color: Theme.accent; font-size: 22px; font-weight: 700; vertical-alignment: center; }
+            Rectangle { horizontal-stretch: 1; }
+            Text {
+                visible: root.auto-paused;
+                text: "auto-paused (fullscreen app)";
+                color: Theme.muted; font-size: 12px; vertical-alignment: center;
+            }
+            Btn { label: root.paused ? "Resume snow" : "Pause snow"; active: root.paused; clicked => { root.toggle-pause(); } }
+            Btn { label: root.play-mode ? "Exit play mode" : "Play mode"; active: root.play-mode; clicked => { root.toggle-play(); } }
+        }
+
+        if root.error-text != "": Rectangle {
+            height: 38px; border-radius: 8px; background: Theme.urgent.with-alpha(0.18);
+            border-width: 1px; border-color: Theme.urgent;
+            HorizontalLayout {
+                padding-left: 12px; padding-right: 8px; spacing: 8px;
+                Text { text: root.error-text; color: Theme.urgent; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; overflow: elide; }
+                Btn { label: "Dismiss"; width: 80px; y: 3px; height: 32px; clicked => { root.dismiss-error(); } }
+            }
+        }
+
+        HorizontalLayout {
+            spacing: 6px;
+            height: 34px;
+            TabBtn { label: "Snow"; active: root.tab == 0; clicked => { root.tab = 0; } }
+            TabBtn { label: "Play & tools"; active: root.tab == 1; clicked => { root.tab = 1; } }
+            TabBtn { label: "Music"; active: root.tab == 2; clicked => { root.tab = 2; } }
+            TabBtn { label: "About"; active: root.tab == 3; clicked => { root.tab = 3; } }
+        }
+
+        Rectangle {
+            vertical-stretch: 1;
+            border-radius: 12px;
+            background: Theme.surface;
+            clip: true;
+
+            if root.tab == 0: ScrollView {
+                VerticalLayout {
+                    padding: 16px; spacing: 10px; alignment: start;
+                    Row { label: "Intensity"; Sld { value <=> root.intensity; edited => { root.config-edited(); } } }
+                    Row { label: "Flake size"; Sld { minimum: 0.5; maximum: 2.5; value <=> root.flake-size; edited => { root.config-edited(); } } }
+                    Row { label: "Wind (← →)"; Sld { minimum: -1; maximum: 1; value <=> root.wind; edited => { root.config-edited(); } } }
+                    Row { label: "Max pile height"; Sld { minimum: 0.02; maximum: 0.5; value <=> root.max-pile; edited => { root.config-edited(); } } }
+                    Row { label: "Melt rate"; Sld { value <=> root.melt-rate; edited => { root.config-edited(); } } }
+                    Row {
+                        label: "FPS cap";
+                        HorizontalLayout {
+                            spacing: 6px; alignment: start;
+                            Btn { label: "30"; active: root.fps-index == 0; clicked => { root.fps-index = 0; root.config-edited(); } }
+                            Btn { label: "60"; active: root.fps-index == 1; clicked => { root.fps-index = 1; root.config-edited(); } }
+                            Btn { label: "120"; active: root.fps-index == 2; clicked => { root.fps-index = 2; root.config-edited(); } }
+                            Btn { label: "Uncapped"; active: root.fps-index == 3; clicked => { root.fps-index = 3; root.config-edited(); } }
+                        }
+                    }
+                    Sw { label: "Random gusts"; checked <=> root.gusts; toggled => { root.config-edited(); } }
+                    Sw { label: "Cursor pushes flakes (wind)"; checked <=> root.cursor-wind; toggled => { root.config-edited(); } }
+                    Sw { label: "Snow settles on windows"; checked <=> root.windows-collide; toggled => { root.config-edited(); } }
+                    Sw { label: "Music-reactive snow"; checked <=> root.music-reactive; toggled => { root.config-edited(); } }
+                    Sw { label: "Penguin critter"; checked <=> root.critter; toggled => { root.config-edited(); } }
+                    Sw { label: "String lights on windows"; checked <=> root.lights; toggled => { root.config-edited(); } }
+                    Sw { label: "Ice sparkles"; checked <=> root.sparkles; toggled => { root.config-edited(); } }
+                    Sw { label: "Aurora at night"; checked <=> root.aurora; toggled => { root.config-edited(); } }
+                    Sw { label: "Restore last scene on launch"; checked <=> root.restore-scene; toggled => { root.config-edited(); } }
+                    Sw { label: "Start with the desktop"; checked <=> root.autostart; toggled => { root.config-edited(); } }
+                    Text { text: "Monitors"; color: Theme.muted; font-size: 12px; }
+                    for m[i] in root.monitors: Sw {
+                        label: m.name; checked: m.enabled;
+                        toggled(on) => { root.monitor-toggled(i, on); }
+                    }
+                }
+            }
+
+            if root.tab == 1: ScrollView {
+                VerticalLayout {
+                    padding: 16px; spacing: 12px; alignment: start;
+                    Text {
+                        text: "Play mode makes the overlay catch the mouse. Left-click: use tool · right-click flick: throw a snowball · Esc: back to passive.";
+                        color: Theme.muted; font-size: 12px; wrap: word-wrap;
+                    }
+                    Text { text: "Tool"; color: Theme.muted; font-size: 12px; }
+                    HorizontalLayout {
+                        spacing: 6px; alignment: start;
+                        Btn { label: "Brush"; active: root.tool-index == 0; clicked => { root.tool-index = 0; root.tool-selected(0); } }
+                        Btn { label: "Shovel"; active: root.tool-index == 1; clicked => { root.tool-index = 1; root.tool-selected(1); } }
+                        Btn { label: "Pack"; active: root.tool-index == 2; clicked => { root.tool-index = 2; root.tool-selected(2); } }
+                        Btn { label: "Freeze"; active: root.tool-index == 3; clicked => { root.tool-index = 3; root.tool-selected(3); } }
+                        Btn { label: "Melt"; active: root.tool-index == 4; clicked => { root.tool-index = 4; root.tool-selected(4); } }
+                        Btn { label: "Snowball"; active: root.tool-index == 5; clicked => { root.tool-index = 5; root.tool-selected(5); } }
+                        Btn { label: "Angel"; active: root.tool-index == 6; clicked => { root.tool-index = 6; root.tool-selected(6); } }
+                    }
+                    Row { label: "Tool radius"; Sld { minimum: 6; maximum: 200; value <=> root.radius; edited => { root.radius-edited(root.radius); } } }
+                    HorizontalLayout {
+                        spacing: 6px; alignment: start;
+                        Btn { label: "Undo"; clicked => { root.undo(); } }
+                        Btn { label: "Redo"; clicked => { root.redo(); } }
+                        Btn { label: "Clear all"; danger: true; clicked => { root.clear(); } }
+                    }
+                    HorizontalLayout {
+                        spacing: 6px; alignment: start;
+                        Btn { label: "Stamp snowman"; clicked => { root.stamp-snowman(); } }
+                        Btn { label: "Generate mountains"; clicked => { root.mountains(); } }
+                    }
+                    HorizontalLayout {
+                        spacing: 6px; alignment: start;
+                        Btn { label: "Save scene"; clicked => { root.save-scene(); } }
+                        Btn { label: "Load scene"; clicked => { root.load-scene(); } }
+                    }
+                    Text {
+                        text: "Decorate snowmen from the in-overlay tool bar (drag eyes, nose, arms, hat, scarf and buttons onto any ball).";
+                        color: Theme.muted; font-size: 12px; wrap: word-wrap;
+                    }
+                }
+            }
+
+            if root.tab == 3: VerticalLayout {
+                padding: 16px; spacing: 10px; alignment: start;
+                Text { text: "snowdesk " + root.version; color: Theme.text; font-size: 18px; font-weight: 600; }
+                Text {
+                    text: "Snow over your desktop, with a music player. MIT licensed.\nNo music is bundled: add your own files in the Music tab.";
+                    color: Theme.muted; font-size: 12px; wrap: word-wrap;
+                }
+                Text { text: "Config: " + root.config-dir; color: Theme.muted; font-size: 11px; overflow: elide; }
+                Rectangle { height: 8px; }
+                AboutSlint { }
+            }
+
+            if root.tab == 2: VerticalLayout {
+                padding: 16px; spacing: 10px;
+                HorizontalLayout {
+                    spacing: 14px;
+                    Rectangle {
+                        width: 88px; height: 88px; border-radius: 10px; background: Theme.bg;
+                        if root.has-art: Image { source: root.now-art; width: 88px; height: 88px; image-fit: cover; }
+                        if !root.has-art: Text { text: "♪"; color: Theme.muted; font-size: 36px; horizontal-alignment: center; vertical-alignment: center; }
+                    }
+                    VerticalLayout {
+                        alignment: center; spacing: 3px;
+                        Text { text: root.now-title == "" ? "Nothing playing" : root.now-title; color: Theme.text; font-size: 18px; font-weight: 600; overflow: elide; }
+                        Text { text: root.now-artist; color: Theme.accent; font-size: 13px; overflow: elide; }
+                        Text { text: root.now-album; color: Theme.muted; font-size: 12px; overflow: elide; }
+                    }
+                }
+                HorizontalLayout {
+                    spacing: 8px;
+                    Text { text: root.position-text; color: Theme.muted; font-size: 12px; vertical-alignment: center; width: 42px; }
+                    SeekBar { position: root.position; duration: root.duration; seek(f) => { root.seek(f); } }
+                    Text { text: root.duration-text; color: Theme.muted; font-size: 12px; vertical-alignment: center; width: 42px; }
+                }
+                HorizontalLayout {
+                    spacing: 8px; alignment: center;
+                    Btn { label: "Shuffle"; active: root.shuffle; clicked => { root.shuffle = !root.shuffle; root.shuffle-edited(root.shuffle); } }
+                    Btn { label: "⏮"; clicked => { root.prev(); } }
+                    Btn { label: root.playing ? "⏸" : "▶"; active: true; min-width: 56px; clicked => { root.play-pause(); } }
+                    Btn { label: "⏭"; clicked => { root.next(); } }
+                    Btn { label: "Repeat"; active: root.repeat; clicked => { root.repeat = !root.repeat; root.repeat-edited(root.repeat); } }
+                    Text { text: "Vol"; color: Theme.muted; font-size: 12px; vertical-alignment: center; }
+                    Sld { width: 120px; maximum: 1.0; value <=> root.volume; edited => { root.volume-edited(root.volume); } }
+                }
+                Rectangle {
+                    vertical-stretch: 1; border-radius: 8px; background: Theme.bg; clip: true;
+                    if root.tracks.length == 0: VerticalLayout {
+                        alignment: center; spacing: 8px; padding: 20px;
+                        Text { text: "No music yet"; color: Theme.text; font-size: 16px; horizontal-alignment: center; }
+                        Text {
+                            text: "Drop your own mp3 / ogg / flac / wav / m4a files into\n" + root.music-dir + "\nThey show up here automatically.";
+                            color: Theme.muted; font-size: 12px; horizontal-alignment: center; wrap: word-wrap;
+                        }
+                    }
+                    // ListView only instantiates visible rows (large libraries).
+                    if root.tracks.length > 0: ListView {
+                            for t[i] in root.tracks: Rectangle {
+                                height: 34px;
+                                background: t.playing ? Theme.surface : ta2.has-hover ? Theme.surface.with-alpha(0.5) : transparent;
+                                HorizontalLayout {
+                                    padding-left: 12px; padding-right: 12px; spacing: 10px;
+                                    Text { text: t.playing ? "▶" : ""; color: Theme.accent; width: 14px; vertical-alignment: center; }
+                                    Text { text: t.title; color: t.playing ? Theme.accent : Theme.text; font-size: 13px; vertical-alignment: center; overflow: elide; horizontal-stretch: 2; }
+                                    Text { text: t.artist; color: Theme.muted; font-size: 12px; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
+                                    Text { text: t.length; color: Theme.muted; font-size: 12px; vertical-alignment: center; }
+                                }
+                                ta2 := TouchArea { clicked => { root.play-index(i); } }
+                            }
+                    }
+                }
+                HorizontalLayout {
+                    spacing: 8px;
+                    Btn { label: "Open music folder"; clicked => { root.open-music-folder(); } }
+                    Text { text: root.music-dir; color: Theme.muted; font-size: 11px; vertical-alignment: center; overflow: elide; }
+                }
+            }
+        }
+    }
+}

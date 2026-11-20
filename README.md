@@ -1,0 +1,214 @@
+# snowdesk ❄
+
+Snow falls over your real desktop. Poke it with the cursor, pile it up, build
+snowmen, throw snowballs, and play your own music while it snows.
+
+Written in Rust. The control panel uses [Slint](https://slint.dev) (Tokyo Night
+theme); the overlay is wgpu on a layer-shell surface (Wayland) or transparent
+always-on-top windows (X11, Windows).
+
+<!-- SCREENSHOT PLACEHOLDER: docs/desktop.png
+     Passive mode: snow falling over the desktop and piling on window tops. -->
+_Screenshot coming soon: snow piling up on window tops._
+
+<!-- GIF PLACEHOLDER: docs/play-mode.gif
+     Play mode: rolling a snowball, stacking a snowman, decorating it, throwing. -->
+_GIF coming soon: building and decorating a snowman in play mode._
+
+<!-- SCREENSHOT PLACEHOLDER: docs/panel.png
+     The control panel (Snow / Play & tools / Music / About tabs). -->
+_Screenshot coming soon: the control panel._
+
+## Download
+
+Grab the latest build from the
+[Releases page](https://github.com/legendarylolo318-cloud/snowdesk/releases):
+
+- **Linux**: `snowdesk-vX.Y.Z-x86_64.AppImage`. Run `chmod +x` on it, then
+  start it.
+- **Windows 10/11**: `snowdesk-vX.Y.Z-windows-x86_64.exe`. No installer and no
+  runtime DLLs needed.
+
+Each release includes `SHA256SUMS.txt`. Check a download with
+`sha256sum -c SHA256SUMS.txt --ignore-missing`.
+
+## Features
+
+- Transparent, **click-through**, always-on-top overlay on **every monitor**,
+  with hotplug and per-monitor scaling. Passive by default: using your desktop
+  is unaffected.
+- Falling flakes with depth layers (parallax), sway, drift, wind and spin, plus
+  random gusts. The **cursor pushes flakes like wind**.
+- Settled snow is a cellular grid (snow / packed snow / ice) that slumps at its
+  angle of repose.
+- Snow settles on the screen bottom **and on the visible top edges of real
+  windows**. It falls off as particles when a window moves, minimizes or
+  closes. Snow never settles on the overlay or on snowdesk's own panel.
+- **Play mode** tools: brush, shovel, pack, freeze, melt (dripping water that
+  refreezes), snowballs (roll to grow, rigid bodies, stackable), snowmen with a
+  decoration palette (eyes, nose, arms, hat, scarves, buttons), quick-stamp
+  snowman, generated mountain range, right-click flick to throw, snow angels,
+  undo/redo (30 steps), clear, save/load scene, optional restore on launch.
+- Festive toggles: a penguin that leaves footprints and sleds, string lights on
+  window edges, ice sparkles and a night-time aurora.
+- **Music player** (rodio + symphonia) for mp3, ogg, flac, wav and m4a/aac,
+  with tags and cover art. The folder is watched live; shuffle, repeat, volume
+  and seek are included. Unreadable files are skipped, and playback moves to a
+  new output device if the current one disappears.
+- **Music-reactive snow**: bass hits (a small FFT on the audio thread) drive
+  gusts and bursts of flakes.
+- **Auto-pause**: no rendering on monitors with a focused fullscreen app or
+  game. With every monitor covered, nothing is simulated or rendered.
+- Tray icon, single-instance IPC, TOML config with **hot reload**, and an
+  autostart toggle.
+- Safety: if the overlay crashes or the GPU resets, the overlay is rebuilt. If
+  it ever stops responding while it takes input (play mode), the process exits
+  so your screen is never blocked.
+
+## Controls
+
+| Where | What |
+| --- | --- |
+| Tray menu / panel button / `snowdesk --toggle-play` | toggle **play mode** |
+| Play mode, left button | use the selected tool (tool bar at the top of each screen) |
+| Play mode, snowball tool | press and drag along the snow to roll a ball; it grows as it picks up snow |
+| Play mode, drag a decoration from the tool bar onto a ball | decorate a snowman |
+| Play mode, right-button flick | throw a snowball |
+| Tool bar `−` / `+` | brush radius |
+| `Esc`, or the red door button on the tool bar | back to passive mode |
+| `snowdesk --pause` | pause / resume the snow |
+
+Stack two or three balls (smaller on top) and they become a snowman: it
+wobbles and accepts decorations.
+
+## Command line and IPC
+
+Run a second `snowdesk` with a flag to control the running instance (Unix
+socket at `$XDG_RUNTIME_DIR/snowdesk.sock`; a localhost port on Windows):
+
+```
+snowdesk --toggle-play    toggle play mode
+snowdesk --pause          pause / resume snow
+snowdesk --clear          clear all snow and snowballs
+snowdesk --next-track     skip to the next track
+snowdesk --show           show the control panel
+snowdesk --quit           quit
+snowdesk --hidden         start without showing the panel (tray only)
+snowdesk --no-panel       overlay only: no panel, no tray
+```
+
+### Hyprland
+
+Classic `hyprland.conf`:
+
+```ini
+exec-once = snowdesk --hidden
+bind = SUPER, S, exec, snowdesk --toggle-play
+bind = SUPER SHIFT, S, exec, snowdesk --pause
+bind = SUPER, N, exec, snowdesk --next-track
+bind = SUPER SHIFT, C, exec, snowdesk --clear
+windowrule = float, class:snowdesk          # keep the panel floating
+```
+
+Lua config (`hyprland.lua`):
+
+```lua
+hl.on("hyprland.start", function()
+    hl.exec_cmd("snowdesk --hidden")
+end)
+hl.bind("SUPER + S", hl.dsp.exec_cmd("snowdesk --toggle-play"), { description = "snowdesk play mode" })
+hl.bind("SUPER + SHIFT + S", hl.dsp.exec_cmd("snowdesk --pause"), { description = "snowdesk pause" })
+hl.bind("SUPER + N", hl.dsp.exec_cmd("snowdesk --next-track"), { description = "snowdesk next track" })
+hl.window_rule({ name = "snowdesk", match = { class = "snowdesk" }, float = true })
+```
+
+If you run the AppImage, use its full path instead of `snowdesk`.
+
+## Music
+
+No music is bundled. Put your own files in any of these folders (subfolders
+are scanned too):
+
+| | Folder |
+| --- | --- |
+| Linux | `$XDG_DATA_HOME/snowdesk/music` (default `~/.local/share/snowdesk/music`) |
+| Windows | `%APPDATA%\snowdesk\music` |
+| Both | a `music/` folder next to the executable, or next to the `.AppImage` file |
+
+The first folder is created on first run. The Music tab has an "Open music
+folder" button. New, removed and renamed files show up automatically.
+
+## Configuration
+
+- Linux: `~/.config/snowdesk/config.toml` (or under `$XDG_CONFIG_HOME`)
+- Windows: `%APPDATA%\snowdesk\config\config.toml`
+
+Settings changed in the panel apply live and are saved automatically. Edits to
+`config.toml` in a text editor are picked up while snowdesk runs (hot reload).
+A file with errors is reported and ignored. Saved scenes go to `scene.bin` in
+the same folder.
+
+## Platform support & known limitations
+
+| | Overlay | Window ledges | Cursor wind | Fullscreen auto-pause |
+| --- | --- | --- | --- | --- |
+| Hyprland | layer-shell | yes (IPC, z-order aware) | yes (IPC) | yes, per monitor |
+| other wlroots / KDE Wayland | layer-shell | **no** | **no** | **no** |
+| X11 | override-redirect windows | yes (EWMH stacking) | yes | yes (EWMH) |
+| Windows 10/11 | DirectComposition windows | yes (DWM bounds) | yes | yes (`SHQueryUserNotificationState`) |
+
+- **Tested** on Arch Linux + Hyprland 0.57 with two monitors (layer-shell and,
+  through XWayland, the X11 backend). The **Windows build is compiled and
+  checked in CI but has not been tried on a real Windows desktop yet**. Please
+  report problems.
+- GNOME Wayland has no layer-shell. There, snowdesk runs the panel and overlay
+  through XWayland, which only sees X11 windows.
+- Non-Hyprland Wayland compositors expose no window or cursor positions to
+  clients, so snow falls only to the screen bottom and cursor wind is off.
+- X11: override-redirect windows cannot take keyboard focus, so in play mode
+  `Esc` is grabbed on the root window. The red door button, tray and
+  `snowdesk --toggle-play` also work.
+- Under XWayland on Hyprland, override-redirect windows on a second monitor
+  are placed at the wrong position by the compositor. Hyprland uses the
+  layer-shell backend by default, so this only affects forced X11 runs.
+- Fractional scaling on Wayland renders at the next integer scale (e.g. 2× for
+  1.5×), which is sharp but uses more GPU memory on those monitors.
+- The Windows IPC uses a localhost TCP port (stored in the config dir) instead
+  of a named pipe.
+
+## Building
+
+Arch Linux:
+
+```
+sudo pacman -S rust pkgconf wayland libxkbcommon alsa-lib libx11 fontconfig vulkan-icd-loader
+cargo build --release
+```
+
+Debian/Ubuntu: `sudo apt install libwayland-dev libxkbcommon-dev libasound2-dev libx11-dev libfontconfig1-dev pkg-config`
+
+Windows: install [rustup](https://rustup.rs) with the MSVC toolchain, then
+`cargo build --release` (produces `target\release\snowdesk.exe`).
+
+Checks: `cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`.
+
+Environment knobs: `RUST_LOG=snowdesk=debug` for logs,
+`SLINT_RENDERER=femtovg` to draw the panel on the GPU instead of the default
+software renderer.
+
+CI (`.github/workflows/ci.yml`) runs fmt, clippy and tests on Linux and
+Windows on every push. `release.yml` builds the AppImage and the Windows `.exe`
+from a clean checkout when a `v*` tag is pushed, then publishes a GitHub
+release with SHA256 checksums.
+
+## License
+
+snowdesk is released under the [MIT License](LICENSE). The icons are original
+to this project.
+
+Third-party crates keep their own licenses. Notably, the
+[Slint](https://slint.dev) UI toolkit is used under the Slint Royalty-free
+Desktop License 2.0 (its AboutSlint widget is shown in the About tab), and the
+audio decoders (Symphonia) are MPL-2.0.
+
+[![Made with Slint](https://raw.githubusercontent.com/slint-ui/slint/master/logo/MadeWithSlint-logo-whitebg.png)](https://slint.dev)

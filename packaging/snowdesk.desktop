@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=snowdesk
+Comment=Snow falls over your desktop. Play with it.
+Exec=snowdesk
+Icon=snowdesk
+Categories=Utility;AudioVideo;Player;
+StartupWMClass=snowdesk
+Terminal=false

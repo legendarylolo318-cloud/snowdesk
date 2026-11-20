@@ -1,0 +1,56 @@
+[package]
+name = "snowdesk"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+description = "Snow falls over your desktop: a click-through snow overlay you can play with, plus a music player"
+license = "MIT"
+repository = "https://github.com/legendarylolo318-cloud/snowdesk"
+readme = "README.md"
+keywords = ["desktop", "overlay", "snow", "wayland", "music"]
+categories = ["games", "multimedia::audio"]
+
+[dependencies]
+anyhow = "1.0.104"
+bytemuck = "1.25.2"
+crossbeam-channel = "0.5.17"
+directories = "6.0.0"
+fastrand = "2.5.0"
+image = { version = "0.25.10", default-features = false, features = ["png", "jpeg"] }
+lofty = "0.25.5"
+notify = "8.2.2"
+pollster = "1.0.3"
+raw-window-handle = "0.6.2"
+rodio = { version = "0.23.0", default-features = false, features = ["playback", "flac", "mp3", "mp4", "vorbis", "wav"] }
+rustfft = "6.4.1"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+slint = { version = "1.19.0", features = ["unstable-winit-030"] }
+toml = "1.2.1"
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+wgpu = "30.0.2"
+winit = { version = "0.30.13", default-features = false, features = ["x11", "rwh_06"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+ksni = { version = "0.3.7", default-features = false, features = ["async-io", "blocking"] }
+libc = "0.2.191"
+smithay-client-toolkit = "0.21.1"
+wayland-backend = { version = "0.3.17", features = ["client_system"] }
+x11rb = { version = "0.14.0", features = ["xfixes", "shape", "randr"] }
+
+[target."cfg(windows)".dependencies]
+tray-icon = "0.26.1"
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_Graphics_Dwm", "Win32_UI_Shell", "Win32_System_Registry", "Win32_System_Threading", "Win32_Storage_FileSystem", "Win32_System_Pipes", "Win32_System_IO", "Win32_Security", "Win32_System_SystemInformation", "Win32_System_Console"] }
+
+[build-dependencies]
+slint-build = "1.19.0"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true
+opt-level = 3
+
+[profile.dev]
+opt-level = 1

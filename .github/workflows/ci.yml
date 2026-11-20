@@ -1,0 +1,52 @@
+name: ci
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  linux:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: System libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwayland-dev libxkbcommon-dev libasound2-dev \
+            libx11-dev libxcb1-dev libfontconfig1-dev pkg-config
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --check
+      - run: cargo clippy --all-targets --locked -- -D warnings
+      - run: cargo test --locked
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy --all-targets --locked -- -D warnings
+      - run: cargo test --locked
+      - run: cargo build --release --locked
+      - name: Check DLL imports and subsystem
+        shell: pwsh
+        run: |
+          $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
+          $dumpbin = Get-ChildItem -Recurse "$vs\VC\Tools\MSVC" -Filter dumpbin.exe | Where-Object { $_.FullName -match 'Hostx64\\x64' } | Select-Object -First 1
+          & $dumpbin.FullName /dependents target\release\snowdesk.exe
+          $deps = & $dumpbin.FullName /dependents target\release\snowdesk.exe | Select-String '\.dll' | ForEach-Object { $_.ToString().Trim() }
+          $bad = $deps | Where-Object { $_ -match '(?i)vcruntime|msvcp|ucrtbase\.dll|dxcompiler|dxil' }
+          if ($bad) { Write-Error "unexpected runtime DLLs: $bad"; exit 1 }
+          $sub = & $dumpbin.FullName /headers target\release\snowdesk.exe | Select-String 'subsystem'
+          Write-Output $sub
+          if (-not ($sub -match 'Windows GUI')) { Write-Error "not a GUI subsystem exe"; exit 1 }
