@@ -41,8 +41,10 @@ jobs:
             --exclude-library 'libasound.so*' \
             --exclude-library 'libxkbcommon.so*' \
             --output appimage
-          ls -la *.AppImage
-          mv snowdesk-*.AppImage snowdesk-${VERSION}-x86_64.AppImage
+          f=$(ls snowdesk-*.AppImage | head -1)
+          target="snowdesk-${VERSION}-x86_64.AppImage"
+          [ "$f" = "$target" ] || mv "$f" "$target"
+          ls -la "$target"
         env:
           LINUXDEPLOY_OUTPUT_VERSION: ${{ github.ref_name }}
           VERSION: ${{ github.ref_name }}
