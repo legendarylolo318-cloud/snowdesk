@@ -7,7 +7,7 @@ use super::{Shared, Snapshot, WinInfo};
 use crate::sim::Rect;
 use std::sync::Arc;
 use std::time::Duration;
-use windows_sys::Win32::Foundation::{BOOL, HWND, LPARAM, POINT, RECT};
+use windows_sys::Win32::Foundation::{HWND, LPARAM, POINT, RECT};
 use windows_sys::Win32::Graphics::Dwm::{
     DWMWA_CLOAKED, DWMWA_EXTENDED_FRAME_BOUNDS, DwmGetWindowAttribute,
 };
@@ -16,6 +16,7 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     EnumWindows, GWL_EXSTYLE, GetCursorPos, GetForegroundWindow, GetWindowLongW,
     GetWindowTextLengthW, GetWindowThreadProcessId, IsIconic, IsWindowVisible, WS_EX_TOOLWINDOW,
 };
+use windows_sys::core::BOOL;
 
 struct Ctx {
     wins: Vec<WinInfo>,

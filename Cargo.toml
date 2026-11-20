@@ -24,7 +24,6 @@ raw-window-handle = "0.6.2"
 rodio = { version = "0.23.0", default-features = false, features = ["playback", "flac", "mp3", "mp4", "vorbis", "wav"] }
 rustfft = "6.4.1"
 serde = { version = "1.0.229", features = ["derive"] }
-serde_json = "1.0.154"
 slint = { version = "1.19.0", features = ["unstable-winit-030"] }
 toml = "1.2.1"
 tracing = "0.1.44"
@@ -35,6 +34,7 @@ winit = { version = "0.30.13", default-features = false, features = ["x11", "rwh
 [target.'cfg(target_os = "linux")'.dependencies]
 ksni = { version = "0.3.7", default-features = false, features = ["async-io", "blocking"] }
 libc = "0.2.191"
+serde_json = "1.0.154"
 smithay-client-toolkit = "0.21.1"
 wayland-backend = { version = "0.3.17", features = ["client_system"] }
 x11rb = { version = "0.14.0", features = ["xfixes", "shape", "randr"] }
