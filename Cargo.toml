@@ -1,6 +1,6 @@
 [package]
 name = "snowdesk"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2024"
 rust-version = "1.88"
 description = "Snow falls over your desktop: a click-through snow overlay you can play with, plus a music player"

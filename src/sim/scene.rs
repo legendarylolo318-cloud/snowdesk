@@ -152,6 +152,42 @@ pub fn encode(worlds: &[(&str, &World)]) -> Vec<u8> {
     v
 }
 
+/// Load a scene from someone else's computer: by monitor name when they
+/// match, otherwise the first saved monitor onto the first monitor, and so
+/// on. Returns how many loaded.
+pub fn import(bytes: &[u8], worlds: &mut [(&str, &mut World)]) -> usize {
+    let n = decode(bytes, worlds);
+    if n > 0 {
+        return n;
+    }
+    let mut r = Rd(bytes);
+    if r.take(5) != Some(MAGIC) {
+        return 0;
+    }
+    let Some(count) = r.u32() else { return 0 };
+    let mut loaded = 0;
+    for i in 0..count as usize {
+        let Some(len) = r.u32() else { break };
+        if r.take(len as usize).is_none() {
+            break;
+        }
+        let ok = match worlds.get_mut(i) {
+            Some((_, w)) => w.decode_scene(&mut r).is_some(),
+            None => {
+                let mut dummy = World::new(8, 8, 1.0, &crate::config::Config::default());
+                dummy.decode_scene(&mut r).is_some()
+            }
+        };
+        if !ok {
+            break;
+        }
+        if i < worlds.len() {
+            loaded += 1;
+        }
+    }
+    loaded
+}
+
 /// Decode into the worlds with matching names; returns how many loaded.
 pub fn decode(bytes: &[u8], worlds: &mut [(&str, &mut World)]) -> usize {
     let mut r = Rd(bytes);
@@ -272,6 +308,20 @@ mod tests {
     }
 
     #[test]
+    fn import_falls_back_to_monitor_order() {
+        let cfg = Config::default();
+        let mut a = World::new(200, 200, 1.0, &cfg);
+        a.grid.set(5, 40, SNOW);
+        a.balls.push(Ball::new(100.0, 100.0, 20.0));
+        let bytes = encode(&[("THEIR-MONITOR", &a)]);
+        let mut b = World::new(300, 300, 1.0, &cfg);
+        assert_eq!(decode(&bytes, &mut [("MY-MONITOR", &mut b)]), 0);
+        assert_eq!(import(&bytes, &mut [("MY-MONITOR", &mut b)]), 1);
+        assert_eq!(b.balls.len(), 1);
+        assert!(b.grid.count(SNOW) > 0);
+    }
+
+    #[test]
     fn garbage_is_rejected() {
         let mut b = World::new(50, 50, 1.0, &Config::default());
         assert_eq!(decode(b"nonsense", &mut [("A", &mut b)]), 0);
@@ -341,6 +391,11 @@ fn write_igloo_scene() {
             }
         }
         world.stamp_igloo(world.w * 0.3);
+        world.stamp_snowman(world.w * 0.55);
+        let gh2 = world.grid.h as i32;
+        for x in (world.grid.w as i32 * 3 / 4)..(world.grid.w as i32 * 3 / 4 + 40) {
+            world.grid.set(x, gh2 - 9, crate::sim::grid::ICE);
+        }
         for row in 0..4 {
             for i in 0..6 {
                 world.place_brick(

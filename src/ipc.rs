@@ -21,6 +21,8 @@ pub enum IpcCmd {
     NextTrack,
     Show,
     Quit,
+    ExportPicture,
+    ExportScene,
 }
 
 impl IpcCmd {
@@ -32,6 +34,8 @@ impl IpcCmd {
             Self::NextTrack => "next-track",
             Self::Show => "show",
             Self::Quit => "quit",
+            Self::ExportPicture => "export-picture",
+            Self::ExportScene => "export-scene",
         }
     }
     pub fn parse(s: &str) -> Option<Self> {
@@ -42,6 +46,8 @@ impl IpcCmd {
             "next-track" => Self::NextTrack,
             "show" => Self::Show,
             "quit" => Self::Quit,
+            "export-picture" => Self::ExportPicture,
+            "export-scene" => Self::ExportScene,
             _ => return None,
         })
     }
@@ -155,6 +161,8 @@ mod tests {
             IpcCmd::NextTrack,
             IpcCmd::Show,
             IpcCmd::Quit,
+            IpcCmd::ExportPicture,
+            IpcCmd::ExportScene,
         ] {
             assert_eq!(IpcCmd::parse(c.name()), Some(c));
         }

@@ -4,9 +4,32 @@ All notable changes to snowdesk are listed here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.4.0] - 2026-11-20
 
 ### Added
+
+- Seasons: winter snow, autumn leaves, spring cherry blossoms, or rain that
+  collects in puddles and dries up; Auto follows the calendar. The brush
+  paints the season's material.
+- Weather moods: calm, steady, windy and the occasional short storm, eased
+  in over a few seconds, with a forecast in the panel (toggle in the Snow
+  tab).
+- Snowman faces: eyes follow the pointer, blink, smile, and frown after a
+  snowball hit.
+- Sleds: the sled tool drops one; drag and flick a sled to push it. Sleds
+  slide down slopes, glide on ice, stop at walls, and penguins hop on for a
+  ride.
+- Penguin village: at night (9 pm-7 am) penguins go home to igloos, with a
+  warm light in the door, and come out in the morning. In the day they fish
+  at holes cut into a sheet of ice, queueing up.
+- Snow settles on bars and docks (Hyprland layer surfaces with a bar-like
+  size) and on the Windows taskbar.
+- Builder challenge: tallest snowman and longest throw records, saved across
+  runs, with a burst of stars for a new record.
+- Share: export a picture of the scene (the snow only, never the desktop),
+  export a scene file, and import a friend's scene (it maps onto your
+  monitors by order when the names differ). Also `--export-picture` and
+  `--export-scene`.
 
 - Pick up existing snowballs in play mode: click one to carry it, let go to
   drop it (onto a bigger ball to stack it), or flick to throw it. With the
@@ -206,6 +229,7 @@ Measured on Hyprland with two monitors (2560×1440 and 1920×1080), Radeon RX
 - The music library keeps a tag cache, so rescans of large folders only read
   new or changed files. The track list is virtualized.
 
+[0.4.0]: https://github.com/legendarylolo318-cloud/snowdesk/releases/tag/v0.4.0
 [0.3.0]: https://github.com/legendarylolo318-cloud/snowdesk/releases/tag/v0.3.0
 [0.2.1]: https://github.com/legendarylolo318-cloud/snowdesk/releases/tag/v0.2.1
 [0.2.0]: https://github.com/legendarylolo318-cloud/snowdesk/releases/tag/v0.2.0

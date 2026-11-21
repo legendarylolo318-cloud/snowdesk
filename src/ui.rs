@@ -320,6 +320,22 @@ pub fn run(
     fwd!(on_stamp_snowman, OverlayCmd::StampSnowman);
     fwd!(on_mountains, OverlayCmd::Mountains);
     fwd!(on_igloo, OverlayCmd::Igloo);
+    fwd!(on_export_picture, OverlayCmd::ExportPicture);
+    fwd!(on_export_scene, OverlayCmd::ExportScene);
+    {
+        let tx = ch.overlay_tx.clone();
+        ui.on_import_scene(move |p| {
+            let p = p.trim().trim_matches('"').trim_matches('\'');
+            if !p.is_empty() {
+                let _ = tx.send(OverlayCmd::ImportScene(p.into()));
+            }
+        });
+    }
+    ui.on_open_exports(|| {
+        let d = crate::platform::export_dir();
+        let _ = std::fs::create_dir_all(&d);
+        open_folder(&d);
+    });
     fwd!(on_save_scene, OverlayCmd::SaveScene);
     fwd!(on_load_scene, OverlayCmd::LoadScene);
     {
@@ -489,6 +505,7 @@ fn on_overlay_event(ui: &Panel, ctl: &Ctl, e: OverlayEvent) {
             );
         }
         OverlayEvent::Forecast(t) => ui.set_forecast(t.into()),
+        OverlayEvent::Notice(t) => ui.set_notice(t.into()),
         OverlayEvent::Records(text, beat) => {
             ui.set_records(text.into());
             if let Some(b) = beat {

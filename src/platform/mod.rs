@@ -221,6 +221,46 @@ pub fn limit_malloc_arenas() {
     }
 }
 
+/// "2026-11-20_174512" in local time, for file names.
+pub fn local_stamp() -> String {
+    #[cfg(target_os = "linux")]
+    unsafe {
+        let t = libc::time(std::ptr::null_mut());
+        let mut tm: libc::tm = std::mem::zeroed();
+        libc::localtime_r(&t, &mut tm);
+        format!(
+            "{:04}-{:02}-{:02}_{:02}{:02}{:02}",
+            tm.tm_year + 1900,
+            tm.tm_mon + 1,
+            tm.tm_mday,
+            tm.tm_hour,
+            tm.tm_min,
+            tm.tm_sec
+        )
+    }
+    #[cfg(windows)]
+    unsafe {
+        let mut st: windows_sys::Win32::Foundation::SYSTEMTIME = std::mem::zeroed();
+        windows_sys::Win32::System::SystemInformation::GetLocalTime(&mut st);
+        format!(
+            "{:04}-{:02}-{:02}_{:02}{:02}{:02}",
+            st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond
+        )
+    }
+}
+
+/// Where exported pictures and scene files go: Pictures/snowdesk.
+pub fn export_dir() -> std::path::PathBuf {
+    let base = directories::UserDirs::new()
+        .and_then(|u| {
+            u.picture_dir()
+                .map(|p| p.to_path_buf())
+                .or_else(|| Some(u.home_dir().to_path_buf()))
+        })
+        .unwrap_or_else(|| std::path::PathBuf::from("."));
+    base.join("snowdesk")
+}
+
 /// Local month (1-12), for the automatic season.
 pub fn local_month() -> u32 {
     #[cfg(target_os = "linux")]

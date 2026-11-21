@@ -48,6 +48,12 @@ pub enum OverlayCmd {
     Mountains,
     SaveScene,
     LoadScene,
+    /// Save a PNG of the current scene (overlay only) to Pictures/snowdesk.
+    ExportPicture,
+    /// Save a shareable scene file to Pictures/snowdesk.
+    ExportScene,
+    /// Load a scene file from someone else.
+    ImportScene(std::path::PathBuf),
     Quit,
 }
 
@@ -59,6 +65,8 @@ pub enum OverlayEvent {
     Monitors(Vec<String>),
     /// Weather forecast text for the panel ("" when weather is off).
     Forecast(String),
+    /// Something worth telling the user (a file was saved, ...).
+    Notice(String),
     /// Builder challenge records, and which one was just beaten.
     Records(String, Option<&'static str>),
     Error(String),
@@ -218,6 +226,8 @@ pub struct Engine {
     aurora_checked: Instant,
     weather: crate::sim::weather::Weather,
     records: crate::sim::records::Records,
+    /// Capture each monitor after the next frame is drawn.
+    export_picture: bool,
     forecast_at: Instant,
     /// Local month and hour, refreshed once a minute.
     month: u32,
@@ -267,6 +277,7 @@ impl Engine {
             aurora_checked: now - Duration::from_secs(120),
             weather: crate::sim::weather::Weather::new(),
             records: crate::sim::records::Records::load(),
+            export_picture: false,
             forecast_at: now,
             month: platform::local_month(),
             hour: platform::local_hour(),
@@ -490,6 +501,48 @@ impl Engine {
                 }
             }
             OverlayCmd::SaveScene => self.save_scene(),
+            OverlayCmd::ExportPicture => {
+                self.export_picture = true;
+                self.next_frame = Instant::now();
+            }
+            OverlayCmd::ExportScene => {
+                let list: Vec<(&str, &World)> = self
+                    .mons
+                    .iter()
+                    .map(|m| (m.spec.name.as_str(), &m.world))
+                    .collect();
+                let bytes = crate::sim::scene::encode(&list);
+                let dir = platform::export_dir();
+                let path = dir.join(format!("snowdesk-{}.snowscene", platform::local_stamp()));
+                let msg = std::fs::create_dir_all(&dir)
+                    .and_then(|_| std::fs::write(&path, bytes))
+                    .map(|_| format!("Scene saved to {}", path.display()))
+                    .unwrap_or_else(|e| format!("Cannot save the scene: {e}"));
+                let _ = self.ctx.ev_tx.send(OverlayEvent::Notice(msg));
+            }
+            OverlayCmd::ImportScene(path) => {
+                let msg = match std::fs::read(&path) {
+                    Ok(bytes) => {
+                        let mut list: Vec<(&str, &mut World)> = self
+                            .mons
+                            .iter_mut()
+                            .map(|m| (m.spec.name.as_str(), &mut m.world))
+                            .collect();
+                        let n = crate::sim::scene::import(&bytes, &mut list);
+                        for m in &mut self.mons {
+                            m.world.grid.mark_all_dirty();
+                            m.force_windows = true;
+                        }
+                        if n > 0 {
+                            format!("Loaded a scene onto {n} monitor(s)")
+                        } else {
+                            "That file is not a snowdesk scene".to_string()
+                        }
+                    }
+                    Err(e) => format!("Cannot open {}: {e}", path.display()),
+                };
+                let _ = self.ctx.ev_tx.send(OverlayEvent::Notice(msg));
+            }
             OverlayCmd::LoadScene => self.load_scene(),
             OverlayCmd::Quit => {
                 if self.cfg.restore_scene {
@@ -910,6 +963,8 @@ impl Engine {
         let ptr = (self.ptr_mon, self.ptr);
         let drag = self.decor_drag;
         let carrying = self.penguin.is_some();
+        let export = std::mem::take(&mut self.export_picture);
+        let mut pictures: Vec<Picture> = Vec::new();
         let held = self.left_down && self.stroke;
         let aurora = self.aurora;
         let sparkle = self.cfg.sparkles;
@@ -1031,6 +1086,18 @@ impl Engine {
                 aurora,
                 sparkle,
             );
+            if export {
+                let frosty = m.world.frost.any;
+                if let Some(img) =
+                    m.renderer
+                        .capture(&m.world.grid, cell, m.instances.len(), aurora, frosty)
+                {
+                    pictures.push((m.spec.name.clone(), img));
+                }
+            }
+        }
+        if export {
+            save_pictures(pictures, self.ctx.ev_tx.clone());
         }
         self.hand_over(&sides);
         self.check_records();
@@ -1099,6 +1166,43 @@ impl Engine {
             .ev_tx
             .send(OverlayEvent::Records(self.records.describe(), beat));
     }
+}
+
+/// Encode and save captured monitors as PNGs off the overlay thread.
+/// A captured monitor: name and (width, height, RGBA pixels).
+type Picture = (String, (u32, u32, Vec<u8>));
+
+fn save_pictures(pics: Vec<Picture>, ev: Sender<OverlayEvent>) {
+    std::thread::spawn(move || {
+        let dir = platform::export_dir();
+        let stamp = platform::local_stamp();
+        let mut saved = Vec::new();
+        for (name, (w, h, rgba)) in pics {
+            let safe: String = name
+                .chars()
+                .map(|c| {
+                    if c.is_ascii_alphanumeric() || c == '-' {
+                        c
+                    } else {
+                        '_'
+                    }
+                })
+                .collect();
+            let path = dir.join(format!("snowdesk-{stamp}-{safe}.png"));
+            let ok = std::fs::create_dir_all(&dir).is_ok()
+                && image::RgbaImage::from_raw(w, h, rgba)
+                    .is_some_and(|img| img.save(&path).is_ok());
+            if ok {
+                saved.push(path);
+            }
+        }
+        let msg = match saved.as_slice() {
+            [] => "Could not save the picture".to_string(),
+            [one] => format!("Picture saved to {}", one.display()),
+            many => format!("{} pictures saved to {}", many.len(), dir.display()),
+        };
+        let _ = ev.send(OverlayEvent::Notice(msg));
+    });
 }
 
 /// The active monitor touching side `right` of monitor `i` (layout units).

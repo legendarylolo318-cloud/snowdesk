@@ -31,6 +31,8 @@ OPTIONS:
   --next-track    skip to the next track
   --show          show the control panel
   --quit          quit the running instance
+  --export-picture  save a picture of the snow scene (Pictures/snowdesk)
+  --export-scene    save a shareable scene file (Pictures/snowdesk)
   --hidden        start without showing the control panel
   --no-panel      headless overlay only (no UI, no tray)
   -h, --help      show this help
@@ -44,6 +46,8 @@ fn cli_command(args: &[String]) -> Option<IpcCmd> {
         "--next-track" => Some(IpcCmd::NextTrack),
         "--show" => Some(IpcCmd::Show),
         "--quit" => Some(IpcCmd::Quit),
+        "--export-picture" => Some(IpcCmd::ExportPicture),
+        "--export-scene" => Some(IpcCmd::ExportScene),
         _ => None,
     })
 }
@@ -115,6 +119,12 @@ fn main() {
             }
             IpcCmd::Quit => {
                 let _ = ui_tx.send(UiMsg::Quit);
+            }
+            IpcCmd::ExportPicture => {
+                let _ = cmd_tx.send(OverlayCmd::ExportPicture);
+            }
+            IpcCmd::ExportScene => {
+                let _ = cmd_tx.send(OverlayCmd::ExportScene);
             }
         });
         if let Err(e) = res {

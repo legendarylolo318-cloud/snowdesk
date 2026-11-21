@@ -49,6 +49,12 @@ Each release includes `SHA256SUMS.txt`. Check a download with
   Snow never settles on the overlay or on snowdesk's own panel.
 - **Icicles** slowly grow under snowy window edges, drip, and break off when
   the window is shaken or closed.
+- Snow also settles on **bars and docks** (Hyprland layer surfaces such as
+  waybar or a dock) and on the **Windows taskbar**.
+- **Seasons**: winter snow, autumn leaves, spring cherry blossoms, or rain
+  that collects in puddles and dries up, or **Auto** to follow the calendar.
+- **Weather moods**: calm spells, steady snow, windy stretches and the
+  occasional short storm, with a forecast in the panel.
 - **Frost** (optional) creeps in from the screen corners while you are away;
   wipe it off, or write in it, with the mouse.
 - **Play mode** tools: brush, shovel, pack, freeze, melt (dripping water that
@@ -63,6 +69,16 @@ Each release includes `SHA256SUMS.txt`. Check a download with
   one monitor to the next**. In play mode, click one to make it hop away, drag
   to carry it, flick to throw it. Hit one with a snowball and it falls over,
   then it and its friends **start a snowball fight**, aiming at your pointer.
+  At night (9 pm-7 am) they **go home to their igloos** (warm light in the
+  door) and come out in the morning; in the day they **fish** at holes you
+  cut into the ice, queueing up when it gets busy. They hop onto parked
+  sleds for a ride.
+- **Snowmen have faces**: their eyes follow your pointer, they blink, they
+  smile, and frown for a while when you hit them with a snowball.
+- **Builder challenge**: tallest snowman and longest throw records (in
+  snow metres), with a burst of stars when you beat one.
+- **Share**: export a picture of your scene (just the snow, never your
+  desktop) or a scene file a friend can import, to `Pictures/snowdesk`.
 - Festive toggles: string lights on window edges, ice sparkles and a
   night-time aurora.
 - **Music player** (rodio + symphonia) for mp3, ogg, flac, wav and m4a/aac,
@@ -96,6 +112,8 @@ Each release includes `SHA256SUMS.txt`. Check a download with
 | Play mode, snowball a penguin | it falls over, then the penguins nearby throw snowballs back at the pointer |
 | Play mode, brick tool | click or drag to lay packed-snow bricks; they stack in a staggered pattern |
 | Tool bar igloo button | build an igloo (sized so the penguins fit through the door) |
+| Play mode, sled tool | click to drop a sled; drag a sled and flick to push it down the slope |
+| Play mode, shovel a gap into a sheet of ice | a fishing hole: penguins come and fish |
 | Play mode, drag a decoration from the tool bar onto a ball | decorate a snowman |
 | Play mode, right-button flick | throw a snowball |
 | Tool bar `−` / `+` | brush radius |
@@ -118,6 +136,8 @@ snowdesk --clear          clear all snow and snowballs
 snowdesk --next-track     skip to the next track
 snowdesk --show           show the control panel
 snowdesk --quit           quit
+snowdesk --export-picture save a picture of the scene to Pictures/snowdesk
+snowdesk --export-scene   save a shareable scene file to Pictures/snowdesk
 snowdesk --hidden         start without showing the panel (tray only)
 snowdesk --no-panel       overlay only: no panel, no tray
 ```

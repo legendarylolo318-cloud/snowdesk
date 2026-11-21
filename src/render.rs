@@ -592,6 +592,143 @@ impl MonitorRenderer {
 }
 
 impl MonitorRenderer {
+    /// Render the scene as last drawn (same uniforms and sprites) into an
+    /// off-screen image on a night-sky background, for "Export picture".
+    /// Returns RGBA8 pixels. Only the overlay is drawn, never the desktop.
+    pub fn capture(
+        &mut self,
+        grid: &Grid,
+        cell: f32,
+        n_instances: usize,
+        aurora: f32,
+        frosty: bool,
+    ) -> Option<(u32, u32, Vec<u8>)> {
+        let dev = &self.gpu.device;
+        let (w, h) = (self.config.width, self.config.height);
+        let tex = dev.create_texture(&wgpu::TextureDescriptor {
+            label: Some("capture"),
+            size: wgpu::Extent3d {
+                width: w,
+                height: h,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: self.config.format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let view = tex.create_view(&Default::default());
+        let row = (w * 4).div_ceil(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT)
+            * wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+        let buf = dev.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("capture"),
+            size: row as u64 * h as u64,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        let mut enc = dev.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+        {
+            let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: None,
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        // Tokyo Night background instead of the desktop.
+                        load: wgpu::LoadOp::Clear(wgpu::Color {
+                            r: 0.10,
+                            g: 0.115,
+                            b: 0.20,
+                            a: 1.0,
+                        }),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            pass.set_bind_group(0, &self.bind, &[]);
+            if aurora > 0.0 {
+                pass.set_pipeline(&self.aurora_pipe);
+                pass.draw(0..3, 0..1);
+            }
+            if frosty {
+                pass.set_pipeline(&self.frost_pipe);
+                pass.draw(0..3, 0..1);
+            }
+            if grid.first_snow_row().is_some() {
+                pass.set_pipeline(&self.grid_pipe);
+                pass.draw(0..3, 0..1);
+            }
+            let n = n_instances.min(MAX_INSTANCES);
+            if n > 0 {
+                pass.set_pipeline(&self.sprite_pipe);
+                pass.set_vertex_buffer(0, self.instances.slice(..));
+                pass.draw(0..6, 0..n as u32);
+            }
+        }
+        let _ = cell;
+        enc.copy_texture_to_buffer(
+            wgpu::TexelCopyTextureInfo {
+                texture: &tex,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::TexelCopyBufferInfo {
+                buffer: &buf,
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(row),
+                    rows_per_image: Some(h),
+                },
+            },
+            wgpu::Extent3d {
+                width: w,
+                height: h,
+                depth_or_array_layers: 1,
+            },
+        );
+        self.gpu.queue.submit(Some(enc.finish()));
+        let (tx, rx) = std::sync::mpsc::channel();
+        buf.slice(..).map_async(wgpu::MapMode::Read, move |r| {
+            let _ = tx.send(r.is_ok());
+        });
+        let _ = dev.poll(wgpu::PollType::Wait {
+            submission_index: None,
+            timeout: Some(std::time::Duration::from_secs(5)),
+        });
+        if !rx.recv().unwrap_or(false) {
+            return None;
+        }
+        let bgra = matches!(
+            self.config.format,
+            wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Bgra8UnormSrgb
+        );
+        let data = buf.slice(..).get_mapped_range().ok()?;
+        let mut out = Vec::with_capacity((w * h * 4) as usize);
+        for y in 0..h as usize {
+            let line = &data[y * row as usize..y * row as usize + w as usize * 4];
+            for px in line.as_chunks::<4>().0 {
+                if bgra {
+                    out.extend_from_slice(&[px[2], px[1], px[0], 255]);
+                } else {
+                    out.extend_from_slice(&[px[0], px[1], px[2], 255]);
+                }
+            }
+        }
+        drop(data);
+        buf.unmap();
+        Some((w, h, out))
+    }
+}
+
+impl MonitorRenderer {
     /// Present a fully transparent frame (used when pausing so no stale snow
     /// stays on screen).
     pub fn blank(&mut self) {

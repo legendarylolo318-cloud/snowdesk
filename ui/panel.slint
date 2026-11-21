@@ -1,5 +1,5 @@
 // Tokyo Night control panel.
-import { AboutSlint, ListView, ScrollView } from "std-widgets.slint";
+import { AboutSlint, LineEdit, ListView, ScrollView } from "std-widgets.slint";
 
 global Theme {
     out property <color> bg: #1a1b26;
@@ -158,6 +158,7 @@ export component Panel inherits Window {
     in property <string> forecast: "";
     in property <string> records: "";
     in property <string> record-news: "";
+    in property <string> notice: "";
     in-out property <bool> gusts: true;
     in-out property <bool> cursor-wind: true;
     in-out property <bool> windows-collide: true;
@@ -211,6 +212,10 @@ export component Panel inherits Window {
     callback stamp-snowman();
     callback mountains();
     callback igloo();
+    callback export-picture();
+    callback export-scene();
+    callback import-scene(string);
+    callback open-exports();
     callback save-scene();
     callback load-scene();
     callback open-music-folder();
@@ -370,6 +375,19 @@ export component Panel inherits Window {
                         Btn { label: "Save scene"; clicked => { root.save-scene(); } }
                         Btn { label: "Load scene"; clicked => { root.load-scene(); } }
                     }
+                    Text { text: "Share"; color: Theme.muted; font-size: 12px; }
+                    HorizontalLayout {
+                        spacing: 6px; alignment: start;
+                        Btn { label: "Export picture"; clicked => { root.export-picture(); } }
+                        Btn { label: "Export scene file"; clicked => { root.export-scene(); } }
+                        Btn { label: "Open folder"; clicked => { root.open-exports(); } }
+                    }
+                    HorizontalLayout {
+                        spacing: 6px;
+                        scene-path := LineEdit { placeholder-text: "Path to a .snowscene file from a friend"; horizontal-stretch: 1; }
+                        Btn { label: "Import"; clicked => { root.import-scene(scene-path.text); } }
+                    }
+                    if root.notice != "": Text { text: root.notice; color: Theme.good; font-size: 12px; wrap: word-wrap; }
                     Text {
                         text: "Decorate snowmen from the in-overlay tool bar (drag eyes, nose, arms, hat, scarf and buttons onto any ball).";
                         color: Theme.muted; font-size: 12px; wrap: word-wrap;
