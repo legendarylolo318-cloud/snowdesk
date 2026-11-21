@@ -212,6 +212,9 @@ pub struct Engine {
     last_beats: u32,
     aurora: f32,
     aurora_checked: Instant,
+    /// Local month and hour, refreshed once a minute.
+    month: u32,
+    hour: u32,
     // pointer state
     ptr_mon: Option<usize>,
     ptr: (f32, f32),
@@ -253,6 +256,8 @@ impl Engine {
             last_beats: 0,
             aurora: 0.0,
             aurora_checked: now - Duration::from_secs(120),
+            month: platform::local_month(),
+            hour: platform::local_hour(),
             ptr_mon: None,
             ptr: (0.0, 0.0),
             left_down: false,
@@ -828,6 +833,8 @@ impl Engine {
         if self.aurora_checked.elapsed() > Duration::from_secs(60) {
             self.aurora_checked = now;
             let h = platform::local_hour();
+            self.hour = h;
+            self.month = platform::local_month();
             self.aurora = if self.cfg.aurora && !(6..18).contains(&h) {
                 1.0
             } else {
@@ -903,6 +910,7 @@ impl Engine {
             }
             m.blanked = false;
             m.world.play = play;
+            m.world.season = self.cfg.season.resolve(self.month);
             let sc = m.spec.scale;
             if new_beats > 0 {
                 m.world.beat((bass * 4.0).clamp(0.3, 1.2));

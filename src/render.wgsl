@@ -35,7 +35,7 @@ fn cell_at(c: vec2<i32>) -> u32 {
 fn fs_grid(in: FsIn) -> @location(0) vec4<f32> {
     let c = vec2<i32>(floor(in.pos.xy / u.cell));
     let t = cell_at(c);
-    if (t == 0u || t == 4u || t > 5u) { return vec4(0.0); }
+    if (t == 0u || t == 4u || t > 8u) { return vec4(0.0); }
     let n = hash(vec2<f32>(c));
     let above = cell_at(c + vec2(0, -1));
     let top = select(0.0, 1.0, above == 0u || above == 4u);
@@ -60,6 +60,24 @@ fn fs_grid(in: FsIn) -> @location(0) vec4<f32> {
         let my = fract(in.pos.y / bh);
         let mx = fract((in.pos.x + off) / bw);
         if (my < 0.12 || mx < 0.06) { col = vec3(0.66, 0.73, 0.86); }
+    }
+    if (t == 6u) {
+        // Autumn leaves: a patchwork of warm colours.
+        let k = hash(vec2<f32>(c) * 1.7);
+        col = mix(vec3(0.85, 0.38, 0.10), vec3(0.93, 0.66, 0.16), k);
+        col = mix(col, vec3(0.62, 0.20, 0.10), step(0.8, n));
+        return vec4(col * (1.0 - 0.1 * top), 1.0);
+    }
+    if (t == 7u) {
+        col = mix(vec3(1.0, 0.78, 0.86), vec3(0.97, 0.62, 0.76), n);
+        return vec4(mix(col, vec3(1.0), top * 0.25), 1.0);
+    }
+    if (t == 8u) {
+        // Water: translucent, with a moving sheen on the surface.
+        let sheen = 0.5 + 0.5 * sin(in.pos.x * 0.08 + u.time * 2.0 + n * 6.0);
+        let wc = vec3(0.30, 0.52, 0.86) + vec3(0.35) * top * sheen;
+        let a = 0.55 + 0.25 * top;
+        return vec4(wc * a, a);
     }
     col = mix(col, vec3(1.0), top * 0.35);
     // Slightly darker toward cell bottoms for depth.

@@ -1,7 +1,7 @@
 //! Scene save/load: small hand-rolled binary format (RLE grid + balls).
 
 use super::balls::{Ball, Decor, DecorKind};
-use super::grid::{BRICK, Grid, WALL};
+use super::grid::{Grid, WALL};
 use super::world::World;
 
 const MAGIC: &[u8; 5] = b"SNOW1";
@@ -82,7 +82,7 @@ impl World {
         for _ in 0..nruns {
             let v = r.u8()?;
             let n = r.u32()? as usize;
-            if cells.len() + n > w * h || v > BRICK || v == WALL {
+            if cells.len() + n > w * h || v > crate::sim::grid::MAX_CELL || v == WALL {
                 return None;
             }
             cells.resize(cells.len() + n, v);

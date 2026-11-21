@@ -221,6 +221,23 @@ pub fn limit_malloc_arenas() {
     }
 }
 
+/// Local month (1-12), for the automatic season.
+pub fn local_month() -> u32 {
+    #[cfg(target_os = "linux")]
+    unsafe {
+        let t = libc::time(std::ptr::null_mut());
+        let mut tm: libc::tm = std::mem::zeroed();
+        libc::localtime_r(&t, &mut tm);
+        tm.tm_mon as u32 + 1
+    }
+    #[cfg(windows)]
+    unsafe {
+        let mut st: windows_sys::Win32::Foundation::SYSTEMTIME = std::mem::zeroed();
+        windows_sys::Win32::System::SystemInformation::GetLocalTime(&mut st);
+        st.wMonth as u32
+    }
+}
+
 /// Local wall-clock hour (0–23), for the night-time aurora.
 pub fn local_hour() -> u32 {
     #[cfg(target_os = "linux")]

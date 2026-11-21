@@ -4,6 +4,7 @@ pub mod grid;
 pub mod ledges;
 pub mod penguin;
 pub mod scene;
+pub mod season;
 pub mod world;
 
 /// One instanced quad for the sprite pipeline (40 bytes).

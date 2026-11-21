@@ -10,6 +10,13 @@ pub const ICE: u8 = 3;
 pub const WALL: u8 = 4;
 /// Packed-snow brick placed by the user: never falls or slumps.
 pub const BRICK: u8 = 5;
+/// Autumn leaves and spring petals: settle and slump like snow.
+pub const LEAF: u8 = 6;
+pub const PETAL: u8 = 7;
+/// Rain water: flows and levels out into puddles.
+pub const WATER: u8 = 8;
+/// Highest valid cell value.
+pub const MAX_CELL: u8 = WATER;
 
 pub const CHUNK: usize = 32;
 
@@ -211,7 +218,8 @@ impl Grid {
         }
         let below = self.get(x, y + 1);
         if below == EMPTY {
-            if self.free_fall_to_flakes && c == SNOW && self.get(x, y + 2) == EMPTY {
+            let light = matches!(c, SNOW | LEAF | PETAL);
+            if self.free_fall_to_flakes && light && self.get(x, y + 2) == EMPTY {
                 let i = y as usize * self.w + x as usize;
                 self.cells[i] = EMPTY;
                 self.mark(x as usize, y as usize);
@@ -227,6 +235,26 @@ impl Grid {
         }
         if c == ICE {
             return; // ice never slumps
+        }
+        if c == WATER {
+            // Flow down diagonally; water resting on water spreads sideways
+            // (puddles level out to one cell deep, then sleep).
+            let (a, b) = if fastrand::bool() { (-1, 1) } else { (1, -1) };
+            for dx in [a, b] {
+                if self.get(x + dx, y) == EMPTY && self.get(x + dx, y + 1) == EMPTY {
+                    self.swap((x, y), (x + dx, y + 1));
+                    return;
+                }
+            }
+            if self.get(x, y + 1) == WATER {
+                for dx in [a, b] {
+                    if self.get(x + dx, y) == EMPTY {
+                        self.swap((x, y), (x + dx, y));
+                        return;
+                    }
+                }
+            }
+            return;
         }
         let (a, b) = if fastrand::bool() { (-1, 1) } else { (1, -1) };
         for dx in [a, b] {
@@ -437,6 +465,25 @@ mod tests {
         g.set(2, 31, SNOW);
         g.step();
         assert!(g.fell.is_empty());
+    }
+
+    #[test]
+    fn water_levels_out_into_a_puddle_and_sleeps() {
+        let mut g = Grid::new(64, 32);
+        for y in 10..32 {
+            g.set(32, y, WATER);
+        }
+        for _ in 0..2000 {
+            g.step();
+        }
+        assert_eq!(g.count(WATER), 22, "no water lost");
+        let tallest = (0..64)
+            .map(|x| (0..32).filter(|&y| g.get(x, y) == WATER).count())
+            .max()
+            .unwrap();
+        assert!(tallest <= 1, "flat puddle, tallest column {tallest}");
+        g.step();
+        assert_eq!(g.moved_last, 0, "settled puddles sleep");
     }
 
     #[test]

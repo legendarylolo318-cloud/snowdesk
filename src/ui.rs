@@ -157,6 +157,7 @@ fn read_cfg(ui: &Panel, base: &Config) -> Config {
         windows_collide: ui.get_windows_collide(),
         music_reactive: ui.get_music_reactive(),
         system_audio: ui.get_system_audio(),
+        season: crate::sim::season::Season::from_index(ui.get_season_index()),
         icicles: ui.get_icicles(),
         frost: ui.get_frost(),
         critter: ui.get_critter(),
@@ -191,6 +192,7 @@ fn apply_cfg(ui: &Panel, c: &Config) {
     ui.set_music_reactive(c.music_reactive);
     ui.set_critter(c.critter);
     ui.set_system_audio(c.system_audio);
+    ui.set_season_index(c.season.index());
     ui.set_icicles(c.icicles);
     ui.set_frost(c.frost);
     ui.set_penguins(c.penguins.clamp(1, crate::sim::world::MAX_PENGUINS) as f32);

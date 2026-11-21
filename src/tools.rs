@@ -1,7 +1,7 @@
 //! Play-mode tools. All operate on a `World` in monitor-local pixels.
 
 use crate::sim::balls::{Ball, Decor, DecorKind};
-use crate::sim::grid::{BRICK, EMPTY, ICE, PACKED, SNOW, WALL};
+use crate::sim::grid::{BRICK, EMPTY, ICE, LEAF, PACKED, PETAL, SNOW, WALL};
 use crate::sim::world::{Flake, FlakeKind, MAX_BALLS, MAX_FLAKES, World};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -58,9 +58,11 @@ impl World {
         let r = ((radius / self.cell).round() as i32).max(1);
         match tool {
             Tool::Brush => {
+                // Paints the season's material (snow, leaves, petals, water).
+                let m = self.season.material();
                 disc(cx, cy, r, |x, y| {
                     if fastrand::u8(..) < 90 {
-                        self.grid.add(x, y, SNOW);
+                        self.grid.add(x, y, m);
                     }
                 });
             }
@@ -82,7 +84,7 @@ impl World {
             Tool::Freeze => {
                 disc(cx, cy, r, |x, y| {
                     let c = self.grid.get(x, y);
-                    if c == SNOW || c == PACKED {
+                    if c == SNOW || c == PACKED || c == crate::sim::grid::WATER {
                         self.grid.set(x, y, ICE);
                     }
                 });
@@ -91,7 +93,9 @@ impl World {
                 let mut drops = Vec::new();
                 disc(cx, cy, r, |x, y| {
                     let c = self.grid.get(x, y);
-                    if matches!(c, SNOW | PACKED | ICE | BRICK) && fastrand::u8(..) < 40 {
+                    if matches!(c, SNOW | PACKED | ICE | BRICK | LEAF | PETAL)
+                        && fastrand::u8(..) < 40
+                    {
                         self.grid.set(x, y, EMPTY);
                         if fastrand::u8(..) < 40 {
                             drops.push((x, y));

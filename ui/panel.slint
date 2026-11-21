@@ -152,6 +152,7 @@ export component Panel inherits Window {
     in-out property <float> max-pile: 0.12;
     in-out property <float> melt-rate: 0.0;
     in-out property <int> fps-index: 1;
+    in-out property <int> season-index: 0;
     in-out property <bool> gusts: true;
     in-out property <bool> cursor-wind: true;
     in-out property <bool> windows-collide: true;
@@ -271,6 +272,17 @@ export component Panel inherits Window {
                     Row { label: "Wind (← →)"; Sld { minimum: -1; maximum: 1; value <=> root.wind; edited => { root.config-edited(); } } }
                     Row { label: "Max pile height"; Sld { minimum: 0.02; maximum: 0.5; value <=> root.max-pile; edited => { root.config-edited(); } } }
                     Row { label: "Melt rate"; Sld { value <=> root.melt-rate; edited => { root.config-edited(); } } }
+                    Row {
+                        label: "Season";
+                        HorizontalLayout {
+                            spacing: 6px; alignment: start;
+                            Btn { label: "❄ Winter"; active: root.season-index == 0; clicked => { root.season-index = 0; root.config-edited(); } }
+                            Btn { label: "🍂 Autumn"; active: root.season-index == 1; clicked => { root.season-index = 1; root.config-edited(); } }
+                            Btn { label: "🌸 Spring"; active: root.season-index == 2; clicked => { root.season-index = 2; root.config-edited(); } }
+                            Btn { label: "🌧 Rain"; active: root.season-index == 3; clicked => { root.season-index = 3; root.config-edited(); } }
+                            Btn { label: "Auto"; active: root.season-index == 4; clicked => { root.season-index = 4; root.config-edited(); } }
+                        }
+                    }
                     Row {
                         label: "FPS cap";
                         HorizontalLayout {

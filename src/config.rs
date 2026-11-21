@@ -37,6 +37,8 @@ pub struct Config {
     pub frost: bool,
     /// React to any audio playing on the computer, not only our player.
     pub system_audio: bool,
+    /// Winter snow, autumn leaves, spring blossoms, rain, or by the calendar.
+    pub season: crate::sim::season::Season,
     pub sparkles: bool,
     pub aurora: bool,
     pub restore_scene: bool,
@@ -68,6 +70,7 @@ impl Default for Config {
             icicles: true,
             frost: false,
             system_audio: false,
+            season: crate::sim::season::Season::Winter,
             sparkles: false,
             aurora: false,
             restore_scene: false,

@@ -2,7 +2,7 @@
 //! gently, thrown off when it is shaken, closed or minimized; and icicles
 //! that grow under snowy ledges.
 
-use super::grid::{BRICK, EMPTY, ICE, PACKED, SNOW, WALL};
+use super::grid::{BRICK, EMPTY, ICE, LEAF, PACKED, PETAL, SNOW, WALL, WATER};
 use super::world::{Flake, FlakeKind, MAX_FLAKES, World};
 use super::{Instance, Rect, SHAPE_TRI, premul};
 
@@ -57,7 +57,7 @@ enum Change {
 }
 
 fn is_snowlike(c: u8) -> bool {
-    matches!(c, SNOW | PACKED | ICE | BRICK)
+    matches!(c, SNOW | PACKED | ICE | BRICK | LEAF | PETAL | WATER)
 }
 
 impl World {
@@ -328,7 +328,7 @@ impl World {
 
     /// Grow, spawn and drip icicles; called once per `dt` seconds.
     pub(crate) fn step_icicles(&mut self, dt: f32) {
-        if !self.cfg.icicles {
+        if !self.cfg.icicles || self.season != super::season::Season::Winter {
             self.icicles.clear();
             return;
         }

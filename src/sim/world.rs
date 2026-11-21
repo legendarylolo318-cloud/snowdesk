@@ -1,8 +1,9 @@
 //! Per-monitor snow world: flakes, settled grid, balls, windows, critter.
 
 use super::balls::{self, Ball, DecorKind};
-use super::grid::{BRICK, EMPTY, Grid, ICE, PACKED, SNOW, WALL};
+use super::grid::{BRICK, EMPTY, Grid, ICE, LEAF, PACKED, PETAL, SNOW, WALL, WATER};
 pub use super::penguin::{Critter, CritterState, MAX_PENGUINS};
+use super::season::Season;
 use super::{
     Instance, Rect, SHAPE_ELLIPSE, SHAPE_GLOW, SHAPE_RECT, SHAPE_SOFT, SHAPE_STAR, SHAPE_TRI,
     premul,
@@ -109,6 +110,10 @@ pub struct World {
     /// Where angry penguins aim (the pointer in play mode).
     pub target: Option<(f32, f32)>,
     pub frost: super::frost::Frost,
+    /// The season in effect (resolved from the config by the engine).
+    pub season: Season,
+    /// Water cells (rain), recounted every second to cap puddles.
+    water_cells: usize,
     /// Frost may grow (a pointer position is available to wipe it).
     pub frost_ok: bool,
     frost_ptr: Option<(f32, f32)>,
@@ -169,6 +174,8 @@ impl World {
             leaving_balls: Vec::new(),
             target: None,
             frost: super::frost::Frost::new(w as f32, h as f32, scale),
+            season: cfg.season.resolve(1),
+            water_cells: 0,
             frost_ok: true,
             frost_ptr: None,
             undo: Vec::new(),
@@ -216,8 +223,19 @@ impl World {
 
     fn target_flakes(&self) -> usize {
         let i = self.cfg.intensity.clamp(0.0, 1.0);
-        let n = (50.0 + 2900.0 * i * i) * self.area_factor();
+        let n = (50.0 + 2900.0 * i * i) * self.area_factor() * self.season.density();
         (n as usize).min(MAX_FLAKES - 2000)
+    }
+
+    /// Terminal fall speed of a season particle at this depth.
+    fn fall_speed(&self, depth: f32) -> f32 {
+        let s = self.scale;
+        match self.season {
+            Season::Autumn => (22.0 + 40.0 * depth) * s,
+            Season::Spring => (28.0 + 50.0 * depth) * s,
+            Season::Rain => (520.0 + 420.0 * depth) * s,
+            _ => (40.0 + 80.0 * depth) * s,
+        }
     }
 
     fn new_flake(&self, anywhere: bool) -> Flake {
@@ -230,7 +248,7 @@ impl World {
                 -10.0 * self.scale - fastrand::f32() * 40.0
             },
             vx: 0.0,
-            vy: (40.0 + 80.0 * depth) * self.scale,
+            vy: self.fall_speed(depth),
             depth,
             phase: fastrand::f32() * std::f32::consts::TAU,
             spin: (fastrand::f32() - 0.5) * 3.0,
@@ -291,6 +309,7 @@ impl World {
         self.grid.step();
         self.cells_to_flakes();
         self.natural_melt();
+        self.evaporate();
 
         let mut hits = balls::step_balls_open(
             &mut self.balls,
@@ -322,7 +341,7 @@ impl World {
             self.step_icicles(1.0);
         }
         if self.ticks.is_multiple_of(15) {
-            let on = self.cfg.frost && self.frost_ok;
+            let on = self.cfg.frost && self.frost_ok && self.season == Season::Winter;
             self.frost.step(0.25, on);
         }
         self.cursor_prev = self.cursor;
@@ -379,7 +398,7 @@ impl World {
         let mut y = cy + 1;
         while n < limit {
             match self.grid.get(cx, y) {
-                SNOW | PACKED | ICE | BRICK => n += 1,
+                SNOW | PACKED | ICE | BRICK | LEAF | PETAL => n += 1,
                 _ => break,
             }
             y += 1;
@@ -416,10 +435,21 @@ impl World {
             match f.kind {
                 FlakeKind::Snow => {
                     f.phase += STEP * (0.8 + f.depth);
+                    // Leaves flutter widely, rain hardly sways.
+                    let sway = match self.season {
+                        Season::Autumn => 46.0,
+                        Season::Spring => 26.0,
+                        Season::Rain => 0.0,
+                        _ => 14.0,
+                    };
                     let tvx =
-                        wind * 90.0 * sc * (0.4 + f.depth) + f.phase.sin() * 14.0 * sc * f.depth;
-                    let tvy = (40.0 + 80.0 * f.depth) * sc;
-                    let k = (STEP * 1.5).min(1.0);
+                        wind * 90.0 * sc * (0.4 + f.depth) + f.phase.sin() * sway * sc * f.depth;
+                    let tvy = self.fall_speed(f.depth);
+                    let k = if self.season == Season::Rain {
+                        1.0
+                    } else {
+                        (STEP * 1.5).min(1.0)
+                    };
                     f.vx += (tvx - f.vx) * k;
                     f.vy += (tvy - f.vy) * k;
                     f.rot += f.spin * STEP;
@@ -485,9 +515,15 @@ impl World {
                             EMPTY
                         }
                     }
-                    _ => SNOW,
+                    _ => self.season.material(),
                 };
-                if v != EMPTY && self.grid.get(cx, cy) == EMPTY && self.pile_height_ok(cx, cy) {
+                let ok = if v == WATER {
+                    // Cap puddles at ~3% of the screen; the rest splashes.
+                    self.water_cells < self.grid.cells.len() / 32
+                } else {
+                    self.pile_height_ok(cx, cy)
+                };
+                if v != EMPTY && self.grid.get(cx, cy) == EMPTY && ok {
                     self.grid.set(cx, cy, v);
                 }
                 self.recycle(i);
@@ -538,6 +574,26 @@ impl World {
         }
     }
 
+    /// Puddles dry up: a few water surface cells evaporate every step, and
+    /// the water count used for the puddle cap is refreshed once a second.
+    fn evaporate(&mut self) {
+        if self.ticks.is_multiple_of(60) {
+            self.water_cells = self.grid.cells.iter().filter(|&&c| c == WATER).count();
+        }
+        if self.water_cells == 0 {
+            return;
+        }
+        let tries = if self.season == Season::Rain { 2 } else { 12 };
+        for _ in 0..tries {
+            let x = fastrand::i32(0..self.grid.w as i32);
+            let y = self.grid.surface_y(x);
+            if self.grid.get(x, y) == WATER {
+                self.grid.set(x, y, EMPTY);
+                self.water_cells = self.water_cells.saturating_sub(1);
+            }
+        }
+    }
+
     fn natural_melt(&mut self) {
         let r = self.cfg.melt_rate;
         if r <= 0.0 {
@@ -551,7 +607,7 @@ impl World {
             let x = fastrand::i32(0..self.grid.w as i32);
             let y = self.grid.surface_y(x);
             let c = self.grid.get(x, y);
-            if (c == SNOW || c == PACKED) && y < self.grid.h as i32 {
+            if matches!(c, SNOW | PACKED | LEAF | PETAL) && y < self.grid.h as i32 {
                 self.grid.set(x, y, EMPTY);
                 self.grid.wake(x as usize, y as usize);
             }
@@ -648,17 +704,7 @@ impl World {
                 continue;
             }
             match f.kind {
-                FlakeKind::Snow => {
-                    let r = base * (0.8 + 2.4 * f.depth);
-                    let a = (0.45 + 0.5 * f.depth) * fade;
-                    out.push(Instance {
-                        pos: [fx, fy],
-                        half: [r, r],
-                        rot: f.rot,
-                        shape: SHAPE_SOFT,
-                        color: premul([0.95, 0.97, 1.0], a),
-                    });
-                }
+                FlakeKind::Snow => self.push_particle(out, f, fade, base),
                 FlakeKind::Shard => out.push(Instance {
                     pos: [fx, fy],
                     half: [4.0 * self.scale, 1.6 * self.scale],
@@ -687,6 +733,72 @@ impl World {
         self.push_critters(out);
         if self.cfg.string_lights {
             self.push_lights(out);
+        }
+    }
+
+    /// A falling particle of the current season.
+    fn push_particle(&self, out: &mut Vec<Instance>, f: &Flake, fade: f32, base: f32) {
+        let sc = self.scale;
+        let pos = [f.x, f.y];
+        // Stable per-particle variety from its phase seed.
+        let pick = ((f.spin * 977.0).abs() as usize) % 4;
+        match self.season {
+            Season::Autumn => {
+                const LEAVES: [[f32; 3]; 4] = [
+                    [0.93, 0.45, 0.12],
+                    [0.80, 0.22, 0.12],
+                    [0.95, 0.72, 0.18],
+                    [0.62, 0.36, 0.16],
+                ];
+                let s = (3.0 + 3.0 * f.depth) * sc * self.cfg.flake_size;
+                // Tumbling: the leaf's apparent width flips as it turns.
+                let flip = (f.phase * 2.3).sin().abs().max(0.25);
+                out.push(Instance {
+                    pos,
+                    half: [s, s * 0.45 * flip + 0.6],
+                    rot: f.rot,
+                    shape: SHAPE_ELLIPSE,
+                    color: premul(LEAVES[pick], (0.75 + 0.25 * f.depth) * fade),
+                });
+            }
+            Season::Spring => {
+                const PETALS: [[f32; 3]; 4] = [
+                    [1.0, 0.75, 0.84],
+                    [0.98, 0.66, 0.78],
+                    [1.0, 0.86, 0.91],
+                    [0.95, 0.58, 0.72],
+                ];
+                let s = (1.6 + 1.8 * f.depth) * sc * self.cfg.flake_size;
+                let flip = (f.phase * 1.7).sin().abs().max(0.35);
+                out.push(Instance {
+                    pos,
+                    half: [s, s * 0.7 * flip],
+                    rot: f.rot,
+                    shape: SHAPE_ELLIPSE,
+                    color: premul(PETALS[pick], (0.6 + 0.35 * f.depth) * fade),
+                });
+            }
+            Season::Rain => {
+                // A streak along the direction of travel.
+                let len = (3.0 + 6.0 * f.depth) * sc;
+                out.push(Instance {
+                    pos,
+                    half: [0.55 * sc * (0.6 + f.depth), len],
+                    rot: -f.vx.atan2(f.vy),
+                    shape: SHAPE_RECT,
+                    color: premul([0.62, 0.74, 0.92], (0.25 + 0.35 * f.depth) * fade),
+                });
+            }
+            _ => {
+                let r = base * (0.8 + 2.4 * f.depth);
+                out.push(Instance {
+                    pos,
+                    half: [r, r],
+                    rot: f.rot,
+                    shape: SHAPE_SOFT,
+                    color: premul([0.95, 0.97, 1.0], (0.45 + 0.5 * f.depth) * fade),
+                });
+            }
         }
     }
 
