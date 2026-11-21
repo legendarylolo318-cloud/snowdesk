@@ -34,6 +34,73 @@ pub fn cursor_pos() -> Option<(f32, f32)> {
     Some((x.trim().parse().ok()?, y.trim().parse().ok()?))
 }
 
+/// Bars and docks from `layers -j`: layer surfaces on the bottom/top
+/// levels whose size looks like a bar (snow settles on them). Shells that
+/// use one big transparent layer for their bar (some quickshell/ags setups)
+/// report no usable bar rectangle and are skipped.
+pub fn parse_layers(layers: &str, monitors: &str) -> Vec<WinInfo> {
+    let (Ok(layers), Ok(monitors)) = (
+        serde_json::from_str::<Value>(layers),
+        serde_json::from_str::<Value>(monitors),
+    ) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    let Some(map) = layers.as_object() else {
+        return out;
+    };
+    for (mon, v) in map {
+        // Monitor size in layout (logical) units.
+        let Some(m) = monitors
+            .as_array()
+            .and_then(|a| a.iter().find(|m| m["name"].as_str() == Some(mon)))
+        else {
+            continue;
+        };
+        let scale = m["scale"].as_f64().unwrap_or(1.0).max(0.1);
+        let mw = m["width"].as_f64().unwrap_or(0.0) / scale;
+        let mh = m["height"].as_f64().unwrap_or(0.0) / scale;
+        for level in ["1", "2"] {
+            let Some(list) = v["levels"][level].as_array() else {
+                continue;
+            };
+            for l in list {
+                if l["namespace"].as_str() == Some("snowdesk") {
+                    continue;
+                }
+                let (Some(x), Some(y), Some(w), Some(h)) = (
+                    l["x"].as_f64(),
+                    l["y"].as_f64(),
+                    l["w"].as_f64(),
+                    l["h"].as_f64(),
+                ) else {
+                    continue;
+                };
+                let bar_like = h > 4.0 && h <= mh * 0.2 && w >= mw * 0.12;
+                if !bar_like {
+                    continue;
+                }
+                out.push(WinInfo {
+                    rect: Rect {
+                        x: x as f32,
+                        y: y as f32,
+                        w: w as f32,
+                        h: h as f32,
+                    },
+                    monitor: Some(mon.clone()),
+                    ledge: true,
+                    id: l["address"]
+                        .as_str()
+                        .and_then(|a| u64::from_str_radix(a.trim_start_matches("0x"), 16).ok())
+                        .unwrap_or(0)
+                        ^ 0x1a7e_0000_0000_0000,
+                });
+            }
+        }
+    }
+    out
+}
+
 /// Parse `clients -j` + `monitors -j` into the windows visible on screen,
 /// front to back, plus the monitors showing a fullscreen window.
 pub fn parse_state(clients: &str, monitors: &str) -> Option<(Vec<WinInfo>, Vec<String>)> {
@@ -135,7 +202,13 @@ fn refresh(snap: &mut Snapshot) -> bool {
     let (Some(c), Some(m)) = (request("j/clients"), request("j/monitors")) else {
         return false;
     };
-    if let Some((w, f)) = parse_state(&c, &m) {
+    if let Some((mut w, f)) = parse_state(&c, &m) {
+        // Bars and docks sit above windows: put them first (front-most).
+        if let Some(layers) = request("j/layers") {
+            let mut bars = parse_layers(&layers, &m);
+            bars.append(&mut w);
+            w = bars;
+        }
         let changed = w != snap.windows;
         if changed {
             snap.generation += 1;
@@ -257,6 +330,29 @@ mod tests {
         assert!(!w[2].ledge, "own panel only occludes");
         assert_eq!(w[3].rect.w, 800.0);
         assert_eq!(f, vec!["HDMI-A-1".to_string()]);
+    }
+
+    #[test]
+    fn bars_and_docks_from_layers() {
+        let mons = r#"[{"name":"DP-1","width":2560,"height":1440,"scale":1.0}]"#;
+        let layers = r#"{"DP-1":{"levels":{
+            "0":[{"address":"0x1","namespace":"wallpaper","x":0,"y":0,"w":2560,"h":1440}],
+            "2":[{"address":"0x2","namespace":"waybar","x":0,"y":0,"w":2560,"h":32},
+                 {"address":"0x3","namespace":"dock","x":900,"y":1360,"w":760,"h":72},
+                 {"address":"0x4","namespace":"quickshell","x":0,"y":0,"w":2560,"h":740}],
+            "3":[{"address":"0x5","namespace":"snowdesk","x":0,"y":0,"w":2560,"h":1440}]}}}"#;
+        let bars = parse_layers(layers, mons);
+        let names: Vec<f32> = bars.iter().map(|b| b.rect.h).collect();
+        assert_eq!(
+            names,
+            vec![32.0, 72.0],
+            "waybar and the dock; not the wallpaper, a full-screen layer or us"
+        );
+        assert!(
+            bars.iter()
+                .all(|b| b.ledge && b.monitor.as_deref() == Some("DP-1"))
+        );
+        assert!(parse_layers("nope", mons).is_empty());
     }
 
     #[test]

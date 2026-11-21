@@ -14,9 +14,9 @@ use windows_sys::Win32::Graphics::Gdi::{
 };
 use windows_sys::Win32::UI::Shell::SHQueryUserNotificationState;
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    EnumWindows, GWL_EXSTYLE, GWL_STYLE, GetClassNameW, GetCursorPos, GetForegroundWindow,
-    GetWindowLongW, GetWindowRect, GetWindowTextLengthW, GetWindowThreadProcessId, IsIconic,
-    IsWindowVisible, IsZoomed, WS_CAPTION, WS_EX_TOOLWINDOW,
+    EnumWindows, FindWindowW, GWL_EXSTYLE, GWL_STYLE, GetClassNameW, GetCursorPos,
+    GetForegroundWindow, GetWindowLongW, GetWindowRect, GetWindowTextLengthW,
+    GetWindowThreadProcessId, IsIconic, IsWindowVisible, IsZoomed, WS_CAPTION, WS_EX_TOOLWINDOW,
 };
 use windows_sys::core::BOOL;
 
@@ -138,6 +138,27 @@ fn fullscreen_monitor() -> Option<String> {
     }
 }
 
+/// The primary taskbar's rectangle, unless it is auto-hidden off screen.
+fn taskbar_rect() -> Option<Rect> {
+    let class: Vec<u16> = "Shell_TrayWnd\0".encode_utf16().collect();
+    unsafe {
+        let hwnd = FindWindowW(class.as_ptr(), std::ptr::null());
+        if hwnd.is_null() || IsWindowVisible(hwnd) == 0 {
+            return None;
+        }
+        let mut r: RECT = std::mem::zeroed();
+        if GetWindowRect(hwnd, &mut r) == 0 || r.bottom - r.top < 8 {
+            return None;
+        }
+        Some(Rect {
+            x: r.left as f32,
+            y: r.top as f32,
+            w: (r.right - r.left) as f32,
+            h: (r.bottom - r.top) as f32,
+        })
+    }
+}
+
 /// Presentation mode ("do not disturb" for slideshows) pauses everywhere.
 fn presentation_mode() -> bool {
     let mut state = 0i32;
@@ -180,6 +201,16 @@ pub fn run(shared: Arc<Shared>) {
                 wins: Vec::new(),
                 pid: std::process::id(),
             };
+            // The taskbar is a tool window (skipped below), but snow should
+            // settle on it: add it first (it is on top).
+            if let Some(r) = taskbar_rect() {
+                ctx.wins.push(WinInfo {
+                    rect: r,
+                    monitor: None,
+                    ledge: true,
+                    id: 0x7a5c_ba72,
+                });
+            }
             unsafe {
                 EnumWindows(Some(enum_proc), &mut ctx as *mut _ as LPARAM);
             }
