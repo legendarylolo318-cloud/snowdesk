@@ -39,6 +39,8 @@ pub struct Config {
     pub system_audio: bool,
     /// Winter snow, autumn leaves, spring blossoms, rain, or by the calendar.
     pub season: crate::sim::season::Season,
+    /// Changing weather: calm spells, wind and the occasional storm.
+    pub weather: bool,
     pub sparkles: bool,
     pub aurora: bool,
     pub restore_scene: bool,
@@ -71,6 +73,7 @@ impl Default for Config {
             frost: false,
             system_audio: false,
             season: crate::sim::season::Season::Winter,
+            weather: true,
             sparkles: false,
             aurora: false,
             restore_scene: false,

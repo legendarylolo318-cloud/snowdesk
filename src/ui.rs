@@ -158,6 +158,7 @@ fn read_cfg(ui: &Panel, base: &Config) -> Config {
         music_reactive: ui.get_music_reactive(),
         system_audio: ui.get_system_audio(),
         season: crate::sim::season::Season::from_index(ui.get_season_index()),
+        weather: ui.get_weather(),
         icicles: ui.get_icicles(),
         frost: ui.get_frost(),
         critter: ui.get_critter(),
@@ -193,6 +194,7 @@ fn apply_cfg(ui: &Panel, c: &Config) {
     ui.set_critter(c.critter);
     ui.set_system_audio(c.system_audio);
     ui.set_season_index(c.season.index());
+    ui.set_weather(c.weather);
     ui.set_icicles(c.icicles);
     ui.set_frost(c.frost);
     ui.set_penguins(c.penguins.clamp(1, crate::sim::world::MAX_PENGUINS) as f32);
@@ -484,6 +486,7 @@ fn on_overlay_event(ui: &Panel, ctl: &Ctl, e: OverlayEvent) {
                     .collect::<Vec<_>>(),
             );
         }
+        OverlayEvent::Forecast(t) => ui.set_forecast(t.into()),
         OverlayEvent::Error(m) => ui.set_error_text(m.into()),
         OverlayEvent::Fatal(m) => {
             ui.set_play_mode(false);

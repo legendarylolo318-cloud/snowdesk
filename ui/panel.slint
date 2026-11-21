@@ -153,6 +153,8 @@ export component Panel inherits Window {
     in-out property <float> melt-rate: 0.0;
     in-out property <int> fps-index: 1;
     in-out property <int> season-index: 0;
+    in-out property <bool> weather: true;
+    in property <string> forecast: "";
     in-out property <bool> gusts: true;
     in-out property <bool> cursor-wind: true;
     in-out property <bool> windows-collide: true;
@@ -293,6 +295,8 @@ export component Panel inherits Window {
                             Btn { label: "Uncapped"; active: root.fps-index == 3; clicked => { root.fps-index = 3; root.config-edited(); } }
                         }
                     }
+                    Sw { label: "Changing weather (calm spells, wind, storms)"; checked <=> root.weather; toggled => { root.config-edited(); } }
+                    if root.weather && root.forecast != "": Text { text: "  Forecast: " + root.forecast; color: Theme.accent; font-size: 12px; }
                     Sw { label: "Random gusts"; checked <=> root.gusts; toggled => { root.config-edited(); } }
                     Sw { label: "Cursor pushes flakes (wind)"; checked <=> root.cursor-wind; toggled => { root.config-edited(); } }
                     Sw { label: "Snow settles on windows"; checked <=> root.windows-collide; toggled => { root.config-edited(); } }

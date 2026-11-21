@@ -57,6 +57,8 @@ pub enum OverlayEvent {
     Paused(bool),
     AutoPaused(bool),
     Monitors(Vec<String>),
+    /// Weather forecast text for the panel ("" when weather is off).
+    Forecast(String),
     Error(String),
     Fatal(String),
 }
@@ -212,6 +214,8 @@ pub struct Engine {
     last_beats: u32,
     aurora: f32,
     aurora_checked: Instant,
+    weather: crate::sim::weather::Weather,
+    forecast_at: Instant,
     /// Local month and hour, refreshed once a minute.
     month: u32,
     hour: u32,
@@ -256,6 +260,8 @@ impl Engine {
             last_beats: 0,
             aurora: 0.0,
             aurora_checked: now - Duration::from_secs(120),
+            weather: crate::sim::weather::Weather::new(),
+            forecast_at: now,
             month: platform::local_month(),
             hour: platform::local_hour(),
             ptr_mon: None,
@@ -845,6 +851,16 @@ impl Engine {
             self.aurora = 0.0;
         }
         self.apply_feed(snap);
+        let changed = self.weather.step(dt, self.cfg.weather, self.cfg.wind);
+        if changed || now >= self.forecast_at {
+            self.forecast_at = now + Duration::from_secs(20);
+            let text = if self.cfg.weather {
+                self.weather.forecast()
+            } else {
+                String::new()
+            };
+            let _ = self.ctx.ev_tx.send(OverlayEvent::Forecast(text));
+        }
 
         let beats = self.ctx.levels.beats();
         let new_beats = beats.wrapping_sub(self.last_beats);
@@ -911,6 +927,7 @@ impl Engine {
             m.blanked = false;
             m.world.play = play;
             m.world.season = self.cfg.season.resolve(self.month);
+            m.world.weather = self.weather.fx;
             let sc = m.spec.scale;
             if new_beats > 0 {
                 m.world.beat((bass * 4.0).clamp(0.3, 1.2));

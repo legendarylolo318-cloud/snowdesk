@@ -112,6 +112,8 @@ pub struct World {
     pub frost: super::frost::Frost,
     /// The season in effect (resolved from the config by the engine).
     pub season: Season,
+    /// Current weather mood's effect (set by the engine).
+    pub weather: super::weather::WeatherFx,
     /// Water cells (rain), recounted every second to cap puddles.
     water_cells: usize,
     /// Frost may grow (a pointer position is available to wipe it).
@@ -175,6 +177,7 @@ impl World {
             target: None,
             frost: super::frost::Frost::new(w as f32, h as f32, scale),
             season: cfg.season.resolve(1),
+            weather: super::weather::WeatherFx::default(),
             water_cells: 0,
             frost_ok: true,
             frost_ptr: None,
@@ -222,7 +225,7 @@ impl World {
     }
 
     fn target_flakes(&self) -> usize {
-        let i = self.cfg.intensity.clamp(0.0, 1.0);
+        let i = (self.cfg.intensity * self.weather.intensity_mul).clamp(0.0, 1.0);
         let n = (50.0 + 2900.0 * i * i) * self.area_factor() * self.season.density();
         (n as usize).min(MAX_FLAKES - 2000)
     }
@@ -412,9 +415,9 @@ impl World {
 
     fn step_flakes(&mut self) {
         let sc = self.scale;
-        let wind = self.cfg.wind * 0.8
+        let wind = (self.cfg.wind + self.weather.wind_add).clamp(-1.2, 1.2) * 0.8
             + if self.cfg.gusts || self.kick > 0.05 {
-                self.gust
+                self.gust * self.weather.gust_mul
             } else {
                 0.0
             };
