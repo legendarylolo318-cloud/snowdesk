@@ -206,7 +206,7 @@ impl Grid {
     #[inline]
     fn update(&mut self, x: i32, y: i32) {
         let c = self.cells[y as usize * self.w + x as usize];
-        if c == EMPTY || c == WALL {
+        if c == EMPTY || c == WALL || c == BRICK {
             return;
         }
         let below = self.get(x, y + 1);

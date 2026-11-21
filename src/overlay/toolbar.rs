@@ -14,6 +14,7 @@ pub enum Action {
     Redo,
     Clear,
     Snowman,
+    Igloo,
     Mountains,
     Radius(f32),
     Decor(DecorKind, u8),
@@ -44,6 +45,7 @@ fn groups() -> Vec<Vec<Action>> {
             Action::Tool(Tool::Melt),
             Action::Tool(Tool::Snowball),
             Action::Tool(Tool::Angel),
+            Action::Tool(Tool::Brick),
         ],
         vec![Action::Radius(-0.2), Action::Radius(0.2)],
         vec![
@@ -51,6 +53,7 @@ fn groups() -> Vec<Vec<Action>> {
             Action::Redo,
             Action::Clear,
             Action::Snowman,
+            Action::Igloo,
             Action::Mountains,
         ],
         vec![
@@ -400,6 +403,57 @@ pub fn icon(out: &mut Vec<Instance>, action: Action, cx: f32, cy: f32, s: f32) {
                 0.0,
                 SHAPE_ELLIPSE,
                 w,
+                1.0,
+            );
+        }
+        Action::Tool(Tool::Brick) => {
+            let b = [0.84, 0.89, 0.98];
+            for (ox, oy) in [(-5.0, 5.0), (5.0, 5.0), (0.0, -1.5)] {
+                q(
+                    out,
+                    cx + ox * u,
+                    cy + oy * u,
+                    4.6 * u,
+                    2.8 * u,
+                    0.0,
+                    SHAPE_RECT,
+                    b,
+                    1.0,
+                );
+            }
+        }
+        Action::Igloo => {
+            q(
+                out,
+                cx,
+                cy + 3.0 * u,
+                11.0 * u,
+                9.0 * u,
+                0.0,
+                SHAPE_ELLIPSE,
+                [0.84, 0.89, 0.98],
+                1.0,
+            );
+            q(
+                out,
+                cx,
+                cy + 11.0 * u,
+                12.0 * u,
+                3.0 * u,
+                0.0,
+                SHAPE_RECT,
+                [0.141, 0.157, 0.231],
+                1.0,
+            );
+            q(
+                out,
+                cx + 5.0 * u,
+                cy + 5.5 * u,
+                2.6 * u,
+                3.0 * u,
+                0.0,
+                SHAPE_ELLIPSE,
+                [0.1, 0.1, 0.16],
                 1.0,
             );
         }

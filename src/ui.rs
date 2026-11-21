@@ -293,6 +293,7 @@ pub fn run(
     fwd!(on_redo, OverlayCmd::Redo);
     fwd!(on_stamp_snowman, OverlayCmd::StampSnowman);
     fwd!(on_mountains, OverlayCmd::Mountains);
+    fwd!(on_igloo, OverlayCmd::Igloo);
     fwd!(on_save_scene, OverlayCmd::SaveScene);
     fwd!(on_load_scene, OverlayCmd::LoadScene);
     {

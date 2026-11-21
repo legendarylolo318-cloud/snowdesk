@@ -1,7 +1,7 @@
 //! Scene save/load: small hand-rolled binary format (RLE grid + balls).
 
 use super::balls::{Ball, Decor, DecorKind};
-use super::grid::{Grid, ICE, WALL};
+use super::grid::{BRICK, Grid, WALL};
 use super::world::World;
 
 const MAGIC: &[u8; 5] = b"SNOW1";
@@ -82,7 +82,7 @@ impl World {
         for _ in 0..nruns {
             let v = r.u8()?;
             let n = r.u32()? as usize;
-            if cells.len() + n > w * h || v > ICE {
+            if cells.len() + n > w * h || v > BRICK || v == WALL {
                 return None;
             }
             cells.resize(cells.len() + n, v);
@@ -193,7 +193,7 @@ pub fn decode(bytes: &[u8], worlds: &mut [(&str, &mut World)]) -> usize {
 mod tests {
     use super::*;
     use crate::config::Config;
-    use crate::sim::grid::SNOW;
+    use crate::sim::grid::{ICE, SNOW};
 
     #[test]
     fn scene_round_trip() {

@@ -1,8 +1,8 @@
 //! Per-monitor snow world: flakes, settled grid, balls, windows, critter.
 
 use super::balls::{self, Ball, DecorKind};
-use super::grid::{EMPTY, Grid, ICE, PACKED, SNOW, WALL};
-pub use super::penguin::{Critter, MAX_PENGUINS};
+use super::grid::{BRICK, EMPTY, Grid, ICE, PACKED, SNOW, WALL};
+pub use super::penguin::{Critter, CritterState, MAX_PENGUINS};
 use super::{
     Instance, Rect, SHAPE_ELLIPSE, SHAPE_GLOW, SHAPE_RECT, SHAPE_SOFT, SHAPE_STAR, SHAPE_TRI,
     premul,
@@ -98,9 +98,24 @@ pub struct World {
     pub critters: Vec<Critter>,
     /// Play mode: the user is building, so falling cells stay cells.
     pub play: bool,
+    /// Screen sides (left, right) that lead to another monitor.
+    pub open_sides: (bool, bool),
+    /// The engine balances penguins across monitors (they walk across).
+    pub shared_penguins: bool,
+    /// Penguins and thrown balls that left through an open side
+    /// (true = right side), collected by the engine.
+    pub leaving: Vec<(Critter, bool)>,
+    pub leaving_balls: Vec<(Ball, bool)>,
+    /// Where angry penguins aim (the pointer in play mode).
+    pub target: Option<(f32, f32)>,
     pub(crate) undo: Vec<Snapshot>,
     pub(crate) redo: Vec<Snapshot>,
     pub(crate) rolling: Option<usize>,
+    /// Where the last brick of the current drag went (brick tool).
+    pub(crate) last_brick: Option<(f32, f32)>,
+    /// Last cursor footprint (play mode) and which foot made it.
+    pub(crate) last_print: Option<(f32, f32)>,
+    pub(crate) print_left: bool,
     pub(crate) removed_acc: f32,
 }
 
@@ -141,9 +156,17 @@ impl World {
             ticks: 0,
             critters: Vec::new(),
             play: false,
+            open_sides: (false, false),
+            shared_penguins: false,
+            leaving: Vec::new(),
+            leaving_balls: Vec::new(),
+            target: None,
             undo: Vec::new(),
             redo: Vec::new(),
             rolling: None,
+            last_brick: None,
+            last_print: None,
+            print_left: false,
             removed_acc: 0.0,
         }
     }
@@ -258,11 +281,18 @@ impl World {
         self.cells_to_flakes();
         self.natural_melt();
 
-        let mut hits = balls::step_balls(&mut self.balls, &self.grid, self.cell, STEP);
+        let mut hits = balls::step_balls_open(
+            &mut self.balls,
+            &self.grid,
+            self.cell,
+            STEP,
+            self.open_sides,
+        );
+        self.balls_leaving();
         if !self.critters.is_empty() {
             for (bi, pi) in self.penguin_hits() {
-                let vx = self.balls[bi].vx;
-                self.knock_penguin(pi, vx);
+                let (vx, user) = (self.balls[bi].vx, !self.balls[bi].by_penguin);
+                self.knock_penguin(pi, vx, user);
                 if !hits.iter().any(|h| h.0 == bi) {
                     hits.push((bi, 2));
                 }
@@ -283,13 +313,43 @@ impl World {
         self.cursor_prev = self.cursor;
     }
 
+    /// Thrown balls that flew out through an open side go to the engine.
+    fn balls_leaving(&mut self) {
+        if self.open_sides == (false, false) {
+            return;
+        }
+        let mut i = 0;
+        while i < self.balls.len() {
+            let b = &self.balls[i];
+            let side = if b.thrown && self.open_sides.0 && b.x < -b.r {
+                Some(false)
+            } else if b.thrown && self.open_sides.1 && b.x > self.w + b.r {
+                Some(true)
+            } else {
+                None
+            };
+            match side {
+                Some(right) => {
+                    let b = self.balls.remove(i);
+                    if let Some(r) = self.rolling.as_mut()
+                        && *r > i
+                    {
+                        *r -= 1;
+                    }
+                    self.leaving_balls.push((b, right));
+                }
+                None => i += 1,
+            }
+        }
+    }
+
     fn pile_height_ok(&self, cx: i32, cy: i32) -> bool {
         let limit = ((self.cfg.max_pile * self.grid.h as f32) as i32).max(2);
         let mut n = 0;
         let mut y = cy + 1;
         while n < limit {
             match self.grid.get(cx, y) {
-                SNOW | PACKED | ICE => n += 1,
+                SNOW | PACKED | ICE | BRICK => n += 1,
                 _ => break,
             }
             y += 1;

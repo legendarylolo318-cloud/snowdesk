@@ -201,6 +201,7 @@ export component Panel inherits Window {
     callback radius-edited(float);
     callback stamp-snowman();
     callback mountains();
+    callback igloo();
     callback save-scene();
     callback load-scene();
     callback open-music-folder();
@@ -320,6 +321,7 @@ export component Panel inherits Window {
                         Btn { label: "Melt"; active: root.tool-index == 4; clicked => { root.tool-index = 4; root.tool-selected(4); } }
                         Btn { label: "Snowball"; active: root.tool-index == 5; clicked => { root.tool-index = 5; root.tool-selected(5); } }
                         Btn { label: "Angel"; active: root.tool-index == 6; clicked => { root.tool-index = 6; root.tool-selected(6); } }
+                        Btn { label: "Bricks"; active: root.tool-index == 7; clicked => { root.tool-index = 7; root.tool-selected(7); } }
                     }
                     Row { label: "Tool radius"; Sld { minimum: 6; maximum: 200; value <=> root.radius; edited => { root.radius-edited(root.radius); } } }
                     HorizontalLayout {
@@ -331,6 +333,7 @@ export component Panel inherits Window {
                     HorizontalLayout {
                         spacing: 6px; alignment: start;
                         Btn { label: "Stamp snowman"; clicked => { root.stamp-snowman(); } }
+                        Btn { label: "Igloo"; clicked => { root.igloo(); } }
                         Btn { label: "Generate mountains"; clicked => { root.mountains(); } }
                     }
                     HorizontalLayout {

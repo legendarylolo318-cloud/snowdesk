@@ -1,7 +1,7 @@
 //! Play-mode tools. All operate on a `World` in monitor-local pixels.
 
 use crate::sim::balls::{Ball, Decor, DecorKind};
-use crate::sim::grid::{EMPTY, ICE, PACKED, SNOW, WALL};
+use crate::sim::grid::{BRICK, EMPTY, ICE, PACKED, SNOW, WALL};
 use crate::sim::world::{Flake, FlakeKind, MAX_BALLS, MAX_FLAKES, World};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -13,6 +13,8 @@ pub enum Tool {
     Melt,
     Snowball,
     Angel,
+    /// Packed-snow bricks for forts and igloos.
+    Brick,
 }
 
 impl Tool {
@@ -25,6 +27,7 @@ impl Tool {
             4 => Tool::Melt,
             5 => Tool::Snowball,
             6 => Tool::Angel,
+            7 => Tool::Brick,
             _ => Tool::Brush,
         }
     }
@@ -88,7 +91,7 @@ impl World {
                 let mut drops = Vec::new();
                 disc(cx, cy, r, |x, y| {
                     let c = self.grid.get(x, y);
-                    if (c == SNOW || c == PACKED || c == ICE) && fastrand::u8(..) < 40 {
+                    if matches!(c, SNOW | PACKED | ICE | BRICK) && fastrand::u8(..) < 40 {
                         self.grid.set(x, y, EMPTY);
                         if fastrand::u8(..) < 40 {
                             drops.push((x, y));
@@ -110,6 +113,17 @@ impl World {
                             temp: true,
                         });
                     }
+                }
+            }
+            Tool::Brick => {
+                // One brick per brick-width of drag.
+                let bw = self.brick_size().0 as f32 * self.cell;
+                if self
+                    .last_brick
+                    .is_none_or(|(lx, ly)| (x - lx).abs() >= bw || (y - ly).abs() >= bw)
+                {
+                    self.place_brick(x, y);
+                    self.last_brick = Some((x, y));
                 }
             }
             Tool::Snowball | Tool::Angel => {}
@@ -186,6 +200,7 @@ impl World {
     }
 
     pub fn roll_end(&mut self) {
+        self.last_brick = None;
         let Some(i) = self.rolling.take() else {
             return;
         };
@@ -486,6 +501,142 @@ impl World {
     }
 }
 
+impl World {
+    /// Brick size in cells (width, height).
+    pub(crate) fn brick_size(&self) -> (i32, i32) {
+        (
+            ((14.0 * self.scale / self.cell).round() as i32).max(3),
+            ((7.0 * self.scale / self.cell).round() as i32).max(2),
+        )
+    }
+
+    /// Place a packed-snow brick under (x, y): it drops onto the highest
+    /// support below the pointer and snaps to a staggered brick pattern.
+    pub fn place_brick(&mut self, x: f32, y: f32) {
+        let (bw, bh) = self.brick_size();
+        let (cx, cy) = (
+            (x / self.cell).floor() as i32,
+            (y / self.cell).floor() as i32,
+        );
+        let from = cy - bh;
+        // Highest support under the brick's columns.
+        let col0 = cx.div_euclid(bw) * bw;
+        let mut land = i32::MAX;
+        for k in 0..2 {
+            // Try both stagger offsets; settle on the course it lands in.
+            let x0 = col0 + if k == 1 { bw / 2 } else { 0 };
+            let l = (x0..x0 + bw)
+                .map(|c| self.grid.surface_from(c, from))
+                .min()
+                .unwrap_or(self.grid.h as i32);
+            let course = (self.grid.h as i32 - l) / bh;
+            if (course % 2 == 1) == (k == 1) {
+                land = l;
+                for c in x0..x0 + bw {
+                    for r in l - bh..l {
+                        if self.grid.get(c, r) == EMPTY {
+                            self.grid.set(c, r, BRICK);
+                        }
+                    }
+                }
+                break;
+            }
+        }
+        let _ = land;
+    }
+
+    /// Stamp an igloo at x: a hollow brick dome with a tunnel on one side,
+    /// tall enough for the configured penguins to walk in.
+    pub fn stamp_igloo(&mut self, x: f32) {
+        self.push_undo();
+        let cell = self.cell;
+        let s = self.scale;
+        let penguin_h = 24.0 * s * self.cfg.penguin_size.clamp(0.5, 3.0) * 1.15;
+        let r_out = (70.0 * s).max(penguin_h * 2.3);
+        let thick = (9.0 * s).max(3.0 * cell);
+        let r_in = r_out - thick;
+        let door_h = penguin_h * 1.35;
+        let tunnel = r_out * 0.45;
+        let dir = if fastrand::bool() { 1.0 } else { -1.0 };
+        let x = x.clamp(r_out + tunnel + 10.0, self.w - r_out - tunnel - 10.0);
+        let cx = (x / cell) as i32;
+        // Base: the median ground height under the igloo.
+        let span = ((r_out + tunnel) / cell).ceil() as i32;
+        let mut ground: Vec<i32> = (cx - span..=cx + span)
+            .map(|c| self.grid.surface_y(c))
+            .collect();
+        ground.sort_unstable();
+        let base = ground[ground.len() / 2];
+        // Level the site: fill dips with bricks, clear snow above the base.
+        for c in cx - span..=cx + span {
+            let sy = self.grid.surface_y(c);
+            for r in base..sy.min(self.grid.h as i32) {
+                self.grid.set(c, r, BRICK);
+            }
+            for r in sy.min(base)..base {
+                if self.grid.get(c, r) != WALL {
+                    self.grid.set(c, r, EMPTY);
+                }
+            }
+        }
+        let rows = (r_out / cell).ceil() as i32 + 1;
+        let door_rows = (door_h / cell).ceil() as i32;
+        for dy in 0..rows {
+            let r = base - 1 - dy;
+            let py = (dy as f32 + 0.5) * cell;
+            for dx in -span..=span {
+                let px = (dx as f32 + 0.5) * cell;
+                let d = px.hypot(py * 1.08);
+                let side = px * dir;
+                let in_tunnel_x = side > r_in * 0.3 && side < r_out + tunnel;
+                let c = cx + dx;
+                if d <= r_out && d > r_in {
+                    // Shell, with the doorway cut out.
+                    if !(in_tunnel_x && dy < door_rows) {
+                        self.grid.set(c, r, BRICK);
+                    } else {
+                        self.grid.set(c, r, EMPTY);
+                    }
+                } else if d <= r_in {
+                    self.grid.set(c, r, EMPTY);
+                } else if in_tunnel_x && side > r_out * 0.7 {
+                    // Tunnel roof outside the dome.
+                    if dy >= door_rows && (dy as f32) < door_rows as f32 + thick / cell {
+                        self.grid.set(c, r, BRICK);
+                    } else if dy < door_rows {
+                        self.grid.set(c, r, EMPTY);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Play mode: the pointer leaves little prints when it skims the snow.
+    pub fn cursor_footprint(&mut self, x: f32, y: f32) {
+        let cell = self.cell;
+        let cx = (x / cell) as i32;
+        let row = (y / cell) as i32;
+        let surf = self.grid.surface_from(cx, row - 1);
+        if surf >= self.grid.h as i32 || (surf - row).abs() > 3 {
+            return;
+        }
+        let gap = 9.0 * self.scale;
+        if self
+            .last_print
+            .is_some_and(|(lx, ly)| (x - lx).hypot(y - ly) < gap)
+        {
+            return;
+        }
+        self.last_print = Some((x, y));
+        self.print_left = !self.print_left;
+        let c = cx + if self.print_left { -1 } else { 1 };
+        let top = self.grid.surface_from(c, row - 2);
+        if self.grid.get(c, top) == SNOW {
+            self.grid.set(c, top, EMPTY);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -691,6 +842,105 @@ mod tests {
         for x in 12..55 {
             assert_eq!(w.grid.get(x, y0), WALL, "x {x}");
         }
+    }
+
+    #[test]
+    fn bricks_stack_and_stay() {
+        let mut w = world();
+        pile(&mut w);
+        let n0 = w.grid.count(BRICK);
+        w.place_brick(200.0, 290.0);
+        w.place_brick(200.0, 250.0);
+        let n = w.grid.count(BRICK);
+        assert!(n > n0);
+        for _ in 0..120 {
+            w.step();
+        }
+        assert_eq!(w.grid.count(BRICK), n, "bricks never fall or slump");
+        // Second brick sits on the first: two courses at that column.
+        let (bw, bh) = w.brick_size();
+        let col = (200.0 / w.cell) as i32;
+        let mut run = 0;
+        for y in 0..w.grid.h as i32 {
+            if w.grid.get(col, y) == BRICK || w.grid.get(col + bw / 2, y) == BRICK {
+                run += 1;
+            }
+        }
+        assert!(run >= 2 * bh, "run {run}");
+    }
+
+    #[test]
+    fn igloo_has_a_hollow_inside_and_a_door() {
+        let mut w = World::new(800, 400, 1.0, &Config::default());
+        w.stamp_igloo(400.0);
+        assert!(w.grid.count(BRICK) > 100);
+        let col = (400.0 / w.cell) as i32;
+        let base = w.grid.surface_y(col - 40); // ground outside
+        // Above the floor in the middle it is hollow...
+        let floor = (0..w.grid.h as i32)
+            .rev()
+            .find(|&y| w.grid.get(col, y) == EMPTY)
+            .unwrap();
+        assert!(w.grid.get(col, floor - 3) == EMPTY, "hollow");
+        // ...and the shell exists above that.
+        assert!((0..floor).any(|y| w.grid.get(col, y) == BRICK), "roof");
+        let _ = base;
+    }
+
+    #[test]
+    fn penguin_walks_into_the_igloo() {
+        let cfg = Config {
+            intensity: 0.0,
+            critter: true,
+            penguins: 1,
+            ..Config::default()
+        };
+        let mut w = World::new(800, 400, 1.0, &cfg);
+        w.stamp_igloo(400.0);
+        // Find the door side: the side with an opening at floor level.
+        let col = (400.0 / w.cell) as i32;
+        let floor_row = (0..w.grid.h as i32)
+            .rev()
+            .find(|&y| w.grid.get(col, y) == EMPTY)
+            .unwrap();
+        let open_right = ((col)..(col + 60)).all(|c| w.grid.get(c, floor_row) == EMPTY);
+        w.step();
+        let start = if open_right { 700.0 } else { 100.0 };
+        let c = &mut w.critters[0];
+        c.x = start;
+        c.dir = if open_right { -1.0 } else { 1.0 };
+        c.state = crate::sim::world::CritterState::Walk;
+        c.t = 100.0;
+        c.y = 400.0;
+        let mut inside = false;
+        for _ in 0..60 * 20 {
+            w.step();
+            let c = &w.critters[0];
+            if (c.x - 400.0).abs() < 25.0 && c.y > (floor_row as f32 - 1.0) * w.cell {
+                inside = true;
+                break;
+            }
+            w.critters[0].t = 100.0;
+        }
+        assert!(inside, "penguin never got inside");
+    }
+
+    #[test]
+    fn cursor_leaves_footprints_in_snow() {
+        let mut w = world();
+        pile(&mut w);
+        let n = w.grid.count(PACKED) + w.grid.count(SNOW);
+        let gh = w.grid.h as i32;
+        for x in 10..80 {
+            w.grid.set(x, gh - 26, SNOW);
+        }
+        let top = (gh - 26) as f32 * w.cell;
+        let before = w.grid.count(SNOW);
+        for i in 0..40 {
+            w.cursor_footprint(60.0 + i as f32 * 5.0, top - 1.0);
+        }
+        assert!(w.grid.count(SNOW) < before, "prints made");
+        assert!(w.grid.count(PACKED) + w.grid.count(SNOW) > n - 40);
     }
 
     #[test]

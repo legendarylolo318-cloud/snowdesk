@@ -33,10 +33,10 @@ fn cell_at(c: vec2<i32>) -> u32 {
 fn fs_grid(in: FsIn) -> @location(0) vec4<f32> {
     let c = vec2<i32>(floor(in.pos.xy / u.cell));
     let t = cell_at(c);
-    if (t == 0u || t >= 4u) { return vec4(0.0); }
+    if (t == 0u || t == 4u || t > 5u) { return vec4(0.0); }
     let n = hash(vec2<f32>(c));
     let above = cell_at(c + vec2(0, -1));
-    let top = select(0.0, 1.0, above == 0u || above >= 4u);
+    let top = select(0.0, 1.0, above == 0u || above == 4u);
     var col = vec3(0.93, 0.96, 1.0) - n * 0.04;
     if (t == 2u) { col = vec3(0.80, 0.87, 0.97) - n * 0.04; }
     if (t == 3u) {
@@ -47,6 +47,17 @@ fn fs_grid(in: FsIn) -> @location(0) vec4<f32> {
             let s = hash(vec2<f32>(c) + floor(u.time * 2.0));
             if (s > 0.993) { col = vec3(1.0); }
         }
+    }
+    if (t == 5u) {
+        // Packed-snow bricks: staggered courses with darker mortar lines.
+        col = vec3(0.86, 0.90, 0.98) - n * 0.03;
+        let bh = u.cell * 2.0;
+        let bw = u.cell * 4.0;
+        let course = floor(in.pos.y / bh);
+        let off = select(0.0, bw * 0.5, fract(course * 0.5) > 0.25);
+        let my = fract(in.pos.y / bh);
+        let mx = fract((in.pos.x + off) / bw);
+        if (my < 0.12 || mx < 0.06) { col = vec3(0.66, 0.73, 0.86); }
     }
     col = mix(col, vec3(1.0), top * 0.35);
     // Slightly darker toward cell bottoms for depth.

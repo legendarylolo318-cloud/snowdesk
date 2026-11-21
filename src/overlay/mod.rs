@@ -44,6 +44,7 @@ pub enum OverlayCmd {
     Undo,
     Redo,
     StampSnowman,
+    Igloo,
     Mountains,
     SaveScene,
     LoadScene,
@@ -450,6 +451,13 @@ impl Engine {
                     m.world.stamp_snowman(x);
                 }
             }
+            OverlayCmd::Igloo => {
+                let i = self.ptr_mon.unwrap_or(0);
+                if let Some(m) = self.mons.get_mut(i) {
+                    let x = m.world.w * (0.25 + 0.5 * fastrand::f32());
+                    m.world.stamp_igloo(x);
+                }
+            }
             OverlayCmd::Mountains => {
                 let i = self.ptr_mon.unwrap_or(0);
                 if let Some(m) = self.mons.get_mut(i) {
@@ -532,6 +540,9 @@ impl Engine {
                         w.drag_penguin(g.idx, x, y);
                     }
                     return;
+                }
+                if !self.left_down && !self.right_down {
+                    self.mons[mi].world.cursor_footprint(x, y);
                 }
                 if self.left_down && self.stroke {
                     let w = &mut self.mons[mi].world;
@@ -630,6 +641,10 @@ impl Engine {
             A::Snowman => {
                 let x = self.mons[mi].world.w * (0.2 + 0.6 * fastrand::f32());
                 self.mons[mi].world.stamp_snowman(x);
+            }
+            A::Igloo => {
+                let x = self.mons[mi].world.w * (0.2 + 0.6 * fastrand::f32());
+                self.mons[mi].world.stamp_igloo(x);
             }
             A::Mountains => self.mons[mi].world.generate_mountains(),
             A::Radius(d) => self.radius = (self.radius * (1.0 + d)).clamp(6.0, 200.0),
@@ -806,6 +821,38 @@ impl Engine {
         let sparkle = self.cfg.sparkles;
         let (auto, fs_all) = (self.auto_paused, snap.fullscreen_any);
 
+        // Which monitors are showing snow this frame, and which screen
+        // sides lead to one of them (penguins and snowballs walk/fly across).
+        let off: Vec<bool> = self
+            .mons
+            .iter()
+            .map(|m| {
+                self.cfg.disabled_outputs.contains(&m.spec.name)
+                    || (auto && (fs_all || snap.fullscreen_monitors.contains(&m.spec.name)))
+            })
+            .collect();
+        let sides: Vec<(Option<usize>, Option<usize>)> = (0..self.mons.len())
+            .map(|i| {
+                if off[i] {
+                    (None, None)
+                } else {
+                    (
+                        neighbor(&self.mons, &off, i, false),
+                        neighbor(&self.mons, &off, i, true),
+                    )
+                }
+            })
+            .collect();
+        let shared = self.mons.len() > 1;
+        for (i, m) in self.mons.iter_mut().enumerate() {
+            m.world.open_sides = (sides[i].0.is_some(), sides[i].1.is_some());
+            m.world.shared_penguins = shared;
+            m.world.target = (play && ptr.0 == Some(i)).then_some(ptr.1);
+        }
+        if shared {
+            self.balance_penguins(&off);
+        }
+
         for (i, m) in self.mons.iter_mut().enumerate() {
             let off = self.cfg.disabled_outputs.contains(&m.spec.name)
                 || (auto && (fs_all || snap.fullscreen_monitors.contains(&m.spec.name)));
@@ -880,6 +927,7 @@ impl Engine {
             m.renderer
                 .render(&mut m.world.grid, cell, &m.instances, time, aurora, sparkle);
         }
+        self.hand_over(&sides);
         let _ = (SHAPE_ELLIPSE, SHAPE_RECT, SHAPE_TRI, SHAPE_STAR);
     }
 }
@@ -910,6 +958,132 @@ impl Engine {
                 }
             }
             _ => {}
+        }
+    }
+}
+
+/// The active monitor touching side `right` of monitor `i` (layout units).
+fn neighbor(mons: &[Mon], off: &[bool], i: usize, right: bool) -> Option<usize> {
+    let a = &mons[i].spec;
+    mons.iter().enumerate().find_map(|(j, m)| {
+        let b = &m.spec;
+        let touching = if right {
+            (b.gx - (a.gx + a.lw)).abs() < 2.0
+        } else {
+            (a.gx - (b.gx + b.lw)).abs() < 2.0
+        };
+        let overlap = b.gy < a.gy + a.lh && b.gy + b.lh > a.gy;
+        (j != i && !off[j] && touching && overlap).then_some(j)
+    })
+}
+
+impl Engine {
+    /// Penguins that walked or were thrown off one monitor appear on the
+    /// next one, at the same height in the desktop layout.
+    fn hand_over(&mut self, sides: &[(Option<usize>, Option<usize>)]) {
+        for i in 0..self.mons.len() {
+            let critters = std::mem::take(&mut self.mons[i].world.leaving);
+            let balls = std::mem::take(&mut self.mons[i].world.leaving_balls);
+            for (c, right) in critters {
+                let to = if right { sides[i].1 } else { sides[i].0 };
+                if let Some(j) = to {
+                    let (x, y, ratio) = self.map_point(i, j, right, c.y);
+                    let mut c = c;
+                    c.x = x;
+                    c.y = y;
+                    c.vx *= ratio;
+                    c.vy *= ratio;
+                    let w = &mut self.mons[j].world;
+                    if c.state != crate::sim::world::CritterState::Air {
+                        // Land on the new monitor's ground at that height.
+                        c.state = crate::sim::world::CritterState::Air;
+                        c.air_time = 0.3;
+                        c.vy = 0.0;
+                    }
+                    w.critters.push(c);
+                }
+            }
+            for (b, right) in balls {
+                let to = if right { sides[i].1 } else { sides[i].0 };
+                if let Some(j) = to {
+                    let (x, y, ratio) = self.map_point(i, j, right, b.y);
+                    let mut b = b;
+                    b.x = x;
+                    b.y = y;
+                    b.vx *= ratio;
+                    b.vy *= ratio;
+                    b.r *= ratio;
+                    let w = &mut self.mons[j].world;
+                    if w.balls.len() < crate::sim::world::MAX_BALLS {
+                        w.balls.push(b);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Entry point on monitor `j` for something leaving monitor `i` at
+    /// height `y`; also the pixel ratio between the two.
+    fn map_point(&self, i: usize, j: usize, right: bool, y: f32) -> (f32, f32, f32) {
+        let (a, b) = (&self.mons[i].spec, &self.mons[j].spec);
+        let gy = a.gy + y / a.feed_scale;
+        let ly = ((gy - b.gy) * b.feed_scale).clamp(0.0, b.h as f32 - 1.0);
+        let x = if right { 2.0 } else { b.w as f32 - 2.0 };
+        (x, ly, b.scale / a.scale)
+    }
+
+    /// Keep `penguins` per showing monitor in total; they wander between
+    /// monitors, so add new ones where there are fewest.
+    fn balance_penguins(&mut self, off: &[bool]) {
+        if !self.cfg.critter {
+            return;
+        }
+        let active: Vec<usize> = (0..self.mons.len()).filter(|&i| !off[i]).collect();
+        if active.is_empty() {
+            return;
+        }
+        let want =
+            self.cfg.penguins.clamp(1, crate::sim::world::MAX_PENGUINS) as usize * active.len();
+        let count = |e: &Self| {
+            active
+                .iter()
+                .map(|&i| e.mons[i].world.critters.len())
+                .sum::<usize>()
+        };
+        while count(self) < want {
+            let &i = active
+                .iter()
+                .min_by_key(|&&i| self.mons[i].world.critters.len())
+                .expect("non-empty");
+            let c = self.mons[i].world.spawn_critter();
+            self.mons[i].world.critters.push(c);
+        }
+        while count(self) > want {
+            let &i = active
+                .iter()
+                .max_by_key(|&&i| self.mons[i].world.critters.len())
+                .expect("non-empty");
+            let w = &mut self.mons[i].world;
+            match w
+                .critters
+                .iter()
+                .rposition(|c| c.state != crate::sim::world::CritterState::Held)
+            {
+                Some(k) => {
+                    w.critters.remove(k);
+                }
+                None => break,
+            }
+        }
+        // A carried penguin's index must stay valid: drop the grab if the
+        // list it points into shrank.
+        if let Some(g) = self.penguin
+            && self
+                .mons
+                .get(g.mon)
+                .is_none_or(|m| g.idx >= m.world.critters.len())
+        {
+            self.penguin = None;
         }
     }
 }

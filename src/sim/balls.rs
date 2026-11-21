@@ -52,6 +52,8 @@ pub struct Ball {
     /// Thrown projectile: splats on impact.
     pub thrown: bool,
     pub in_snowman: bool,
+    /// Thrown by a penguin (does not make penguins angry).
+    pub by_penguin: bool,
 }
 
 impl Ball {
@@ -109,7 +111,20 @@ fn ground_y(grid: &Grid, cell: f32, x: f32, from_row: i32) -> f32 {
 
 /// Advance all balls one fixed step. Returns indices of thrown balls that
 /// hit something (index, hit kind: 0 = ground/snow, 1 = ball).
+#[cfg(test)]
 pub fn step_balls(balls: &mut [Ball], grid: &Grid, cell: f32, dt: f32) -> Vec<(usize, u8)> {
+    step_balls_open(balls, grid, cell, dt, (false, false))
+}
+
+/// Like [`step_balls`]; thrown balls pass through screen sides marked open
+/// (left, right) so they can fly on to the next monitor.
+pub fn step_balls_open(
+    balls: &mut [Ball],
+    grid: &Grid,
+    cell: f32,
+    dt: f32,
+    open: (bool, bool),
+) -> Vec<(usize, u8)> {
     let mut hits = Vec::new();
     let wpx = grid.w as f32 * cell;
     // A recognised snowman keeps its shape: its slow balls hold their x
@@ -131,11 +146,11 @@ pub fn step_balls(balls: &mut [Ball], grid: &Grid, cell: f32, dt: f32) -> Vec<(u
         b.vy += GRAVITY * dt;
         b.x += b.vx * dt;
         b.y += b.vy * dt;
-        if b.x < b.r {
+        if b.x < b.r && !(b.thrown && open.0) {
             b.x = b.r;
             b.vx = b.vx.abs() * 0.3;
         }
-        if b.x > wpx - b.r {
+        if b.x > wpx - b.r && !(b.thrown && open.1) {
             b.x = wpx - b.r;
             b.vx = -b.vx.abs() * 0.3;
         }
