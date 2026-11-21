@@ -59,6 +59,8 @@ pub enum OverlayEvent {
     Monitors(Vec<String>),
     /// Weather forecast text for the panel ("" when weather is off).
     Forecast(String),
+    /// Builder challenge records, and which one was just beaten.
+    Records(String, Option<&'static str>),
     Error(String),
     Fatal(String),
 }
@@ -215,6 +217,7 @@ pub struct Engine {
     aurora: f32,
     aurora_checked: Instant,
     weather: crate::sim::weather::Weather,
+    records: crate::sim::records::Records,
     forecast_at: Instant,
     /// Local month and hour, refreshed once a minute.
     month: u32,
@@ -263,6 +266,7 @@ impl Engine {
             aurora: 0.0,
             aurora_checked: now - Duration::from_secs(120),
             weather: crate::sim::weather::Weather::new(),
+            records: crate::sim::records::Records::load(),
             forecast_at: now,
             month: platform::local_month(),
             hour: platform::local_hour(),
@@ -327,6 +331,7 @@ impl Engine {
             .ctx
             .ev_tx
             .send(OverlayEvent::Monitors(self.monitor_names()));
+        self.send_records(None);
         Ok(())
     }
 
@@ -1028,6 +1033,7 @@ impl Engine {
             );
         }
         self.hand_over(&sides);
+        self.check_records();
         let _ = (SHAPE_ELLIPSE, SHAPE_RECT, SHAPE_TRI, SHAPE_STAR);
     }
 }
@@ -1059,6 +1065,39 @@ impl Engine {
             }
             _ => {}
         }
+    }
+}
+
+impl Engine {
+    /// Compare snowmen and landed throws with the records; celebrate and
+    /// save new ones.
+    fn check_records(&mut self) {
+        let mut beat = None;
+        for m in &mut self.mons {
+            if let Some((h, x, y)) = m.world.tallest
+                && self.records.snowman(h)
+            {
+                m.world.cheer(x, y);
+                beat = Some("New record: tallest snowman!");
+            }
+            for (d, x, y) in std::mem::take(&mut m.world.throws_landed) {
+                if self.records.throw(d) {
+                    m.world.cheer(x, y);
+                    beat = Some("New record: longest throw!");
+                }
+            }
+        }
+        if beat.is_some() {
+            self.records.save();
+            self.send_records(beat);
+        }
+    }
+
+    fn send_records(&self, beat: Option<&'static str>) {
+        let _ = self
+            .ctx
+            .ev_tx
+            .send(OverlayEvent::Records(self.records.describe(), beat));
     }
 }
 

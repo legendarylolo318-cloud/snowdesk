@@ -489,6 +489,12 @@ fn on_overlay_event(ui: &Panel, ctl: &Ctl, e: OverlayEvent) {
             );
         }
         OverlayEvent::Forecast(t) => ui.set_forecast(t.into()),
+        OverlayEvent::Records(text, beat) => {
+            ui.set_records(text.into());
+            if let Some(b) = beat {
+                ui.set_record_news(b.into());
+            }
+        }
         OverlayEvent::Error(m) => ui.set_error_text(m.into()),
         OverlayEvent::Fatal(m) => {
             ui.set_play_mode(false);

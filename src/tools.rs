@@ -405,6 +405,10 @@ impl World {
         for &(i, kind) in hits {
             let b = self.balls[i].clone();
             dead.push(i);
+            if !b.by_penguin {
+                let m = b.travel / self.scale / crate::sim::records::PX_PER_METRE;
+                self.throws_landed.push((m, b.x, b.y));
+            }
             let (cx, cy) = self.cell_xy(b.x, b.y);
             // Splat: scatter snow particles and a few cells.
             for _ in 0..14 {
@@ -894,6 +898,10 @@ mod tests {
             w.balls.iter().map(|b| (b.x, b.y, b.r)).collect::<Vec<_>>()
         );
         assert_eq!(w.snowmen[0].len(), 3);
+        // Builder challenge: three balls of 34 + 25 + 18 px radius stand
+        // about 1.5 snow metres tall.
+        let (h, _, _) = w.tallest.expect("measured");
+        assert!((h - 1.54).abs() < 0.1, "height {h}");
     }
 
     #[test]

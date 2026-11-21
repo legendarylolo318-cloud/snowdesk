@@ -3,6 +3,7 @@ pub mod frost;
 pub mod grid;
 pub mod ledges;
 pub mod penguin;
+pub mod records;
 pub mod scene;
 pub mod season;
 pub mod sled;

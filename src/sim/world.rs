@@ -102,6 +102,13 @@ pub struct World {
     pub holes: Vec<super::village::Hole>,
     /// Night time: penguins go home to their igloos (set by the engine).
     pub night: bool,
+    /// Builder challenge: the tallest snowman standing now (m, with its top
+    /// position), and user throws that landed (m, landing point), for the
+    /// engine to compare with the records.
+    pub tallest: Option<(f32, f32, f32)>,
+    pub throws_landed: Vec<(f32, f32, f32)>,
+    /// Record celebrations: star bursts (x, y, age s).
+    pub cheers: Vec<(f32, f32, f32)>,
     /// Play mode: the user is building, so falling cells stay cells.
     pub play: bool,
     /// Screen sides (left, right) that lead to another monitor.
@@ -178,6 +185,9 @@ impl World {
             igloos: Vec::new(),
             holes: Vec::new(),
             night: false,
+            tallest: None,
+            throws_landed: Vec::new(),
+            cheers: Vec::new(),
             play: false,
             open_sides: (false, false),
             shared_penguins: false,
@@ -344,6 +354,10 @@ impl World {
         if !hits.is_empty() {
             self.resolve_throws(&hits);
         }
+        for c in &mut self.cheers {
+            c.2 += STEP;
+        }
+        self.cheers.retain(|c| c.2 < 1.6);
         self.ticks = self.ticks.wrapping_add(1);
         if self.ticks.is_multiple_of(20) {
             self.update_snowmen();
@@ -655,6 +669,21 @@ impl World {
             }
         }
         self.snowmen = found;
+        // Height of the tallest snowman, bottom of the base to the top ball.
+        self.tallest = self
+            .snowmen
+            .iter()
+            .map(|chain| {
+                let bot = &self.balls[chain[0]];
+                let top = &self.balls[*chain.last().unwrap_or(&chain[0])];
+                let h = (bot.y + bot.r) - (top.y - top.r);
+                (
+                    h / self.scale / super::records::PX_PER_METRE,
+                    top.x,
+                    top.y - top.r,
+                )
+            })
+            .max_by(|a, b| a.0.total_cmp(&b.0));
     }
 
     pub(crate) fn surface_px(&self, x: f32) -> f32 {
@@ -764,10 +793,41 @@ impl World {
         }
         self.push_ball_instances(out);
         self.push_icicles(out);
+        self.push_cheers(out);
         self.push_sleds(out);
         self.push_critters(out);
         if self.cfg.string_lights {
             self.push_lights(out);
+        }
+    }
+
+    pub fn cheer(&mut self, x: f32, y: f32) {
+        self.cheers.push((x, y, 0.0));
+    }
+
+    fn push_cheers(&self, out: &mut Vec<Instance>) {
+        const COLS: [[f32; 3]; 4] = [
+            [1.0, 0.85, 0.3],
+            [0.5, 0.8, 1.0],
+            [1.0, 0.5, 0.6],
+            [0.6, 1.0, 0.6],
+        ];
+        for &(x, y, age) in &self.cheers {
+            let a = (1.0 - age / 1.6).max(0.0);
+            for k in 0..12 {
+                let ang = k as f32 / 12.0 * std::f32::consts::TAU + age;
+                let r = (20.0 + 90.0 * age) * self.scale;
+                out.push(Instance {
+                    pos: [
+                        x + ang.cos() * r,
+                        y + ang.sin() * r - 30.0 * age * self.scale,
+                    ],
+                    half: [6.0 * self.scale; 2],
+                    rot: age * 4.0,
+                    shape: SHAPE_STAR,
+                    color: premul(COLS[k % 4], a),
+                });
+            }
         }
     }
 

@@ -156,6 +156,8 @@ export component Panel inherits Window {
     in-out property <bool> weather: true;
     in-out property <bool> village: true;
     in property <string> forecast: "";
+    in property <string> records: "";
+    in property <string> record-news: "";
     in-out property <bool> gusts: true;
     in-out property <bool> cursor-wind: true;
     in-out property <bool> windows-collide: true;
@@ -335,6 +337,8 @@ export component Panel inherits Window {
                         text: "Play mode makes the overlay catch the mouse. Left-click: use tool · right-click flick: throw a snowball · click a penguin or an old snowball to pick it up, drag and fling to throw · Esc: back to passive.";
                         color: Theme.muted; font-size: 12px; wrap: word-wrap;
                     }
+                    if root.records != "": Text { text: "🏆 " + root.records; color: Theme.accent; font-size: 13px; }
+                    if root.record-news != "": Text { text: root.record-news; color: Theme.good; font-size: 12px; }
                     Text { text: "Tool"; color: Theme.muted; font-size: 12px; }
                     HorizontalLayout {
                         spacing: 6px; alignment: start;
