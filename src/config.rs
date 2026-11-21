@@ -41,6 +41,8 @@ pub struct Config {
     pub season: crate::sim::season::Season,
     /// Changing weather: calm spells, wind and the occasional storm.
     pub weather: bool,
+    /// Penguins go home to igloos at night (9 pm - 7 am).
+    pub penguin_village: bool,
     pub sparkles: bool,
     pub aurora: bool,
     pub restore_scene: bool,
@@ -74,6 +76,7 @@ impl Default for Config {
             system_audio: false,
             season: crate::sim::season::Season::Winter,
             weather: true,
+            penguin_village: true,
             sparkles: false,
             aurora: false,
             restore_scene: false,

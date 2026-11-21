@@ -665,6 +665,17 @@ impl World {
                 }
             }
         }
+        let x = (cx as f32 + 0.5) * cell;
+        self.igloos.retain(|o| (o.x - x).abs() > o.r_out + r_out);
+        self.igloos.push(crate::sim::village::Igloo {
+            x,
+            floor: base as f32 * cell,
+            dir,
+            r_in,
+            r_out,
+            door_h,
+            tunnel,
+        });
     }
 
     /// Play mode: the pointer leaves little prints when it skims the snow.

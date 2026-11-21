@@ -98,6 +98,10 @@ pub struct World {
     ticks: u32,
     pub critters: Vec<Critter>,
     pub sleds: Vec<super::sled::Sled>,
+    pub igloos: Vec<super::village::Igloo>,
+    pub holes: Vec<super::village::Hole>,
+    /// Night time: penguins go home to their igloos (set by the engine).
+    pub night: bool,
     /// Play mode: the user is building, so falling cells stay cells.
     pub play: bool,
     /// Screen sides (left, right) that lead to another monitor.
@@ -171,6 +175,9 @@ impl World {
             ticks: 0,
             critters: Vec::new(),
             sleds: Vec::new(),
+            igloos: Vec::new(),
+            holes: Vec::new(),
+            night: false,
             play: false,
             open_sides: (false, false),
             shared_penguins: false,
@@ -345,6 +352,9 @@ impl World {
         self.step_critters();
         if self.ticks.is_multiple_of(60) {
             self.step_icicles(1.0);
+        }
+        if self.ticks.is_multiple_of(120) && !self.critters.is_empty() {
+            self.refresh_village();
         }
         if self.ticks.is_multiple_of(15) {
             let on = self.cfg.frost && self.frost_ok && self.season == Season::Winter;
@@ -697,8 +707,16 @@ impl World {
         self.balls.clear();
         self.snowmen.clear();
         self.sleds.clear();
+        self.igloos.clear();
         for c in &mut self.critters {
             c.ride = None;
+            c.goal = super::village::Goal::None;
+            if matches!(
+                c.state,
+                CritterState::Ride | CritterState::Sleep | CritterState::Fish
+            ) {
+                c.state = CritterState::Idle;
+            }
         }
         self.rolling = None;
         self.reapply_walls();

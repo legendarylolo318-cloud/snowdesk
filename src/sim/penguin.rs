@@ -16,6 +16,10 @@ pub enum CritterState {
     Held,
     /// Riding a sled (see `Critter::ride`).
     Ride,
+    /// Asleep inside an igloo (not drawn).
+    Sleep,
+    /// Fishing at a hole in the ice.
+    Fish,
     /// Knocked over by a snowball or a hard landing; gets up again.
     Fallen,
 }
@@ -54,6 +58,11 @@ pub struct Critter {
     pub bumps: f32,
     /// Index of the sled it rides.
     pub ride: Option<usize>,
+    /// Going home to an igloo, or fishing.
+    pub goal: super::village::Goal,
+    /// Fishing time left, and fish-catch animation time left.
+    pub fish_t: f32,
+    pub catch_t: f32,
 }
 
 const SPIN_TIME: f32 = 0.7;
@@ -90,6 +99,9 @@ impl World {
             spin: 0.0,
             bumps: 0.0,
             ride: None,
+            goal: super::village::Goal::None,
+            fish_t: 0.0,
+            catch_t: 0.0,
         }
     }
 
@@ -182,6 +194,9 @@ impl World {
         if let Some(keep) = self.ride_sled(c, k) {
             return keep;
         }
+        if let Some(keep) = self.village_step(c, k) {
+            return keep;
+        }
         // Buried: snow, ice or bricks piled up around its body (snowfall,
         // the brush, a dropped brick). Dig up to the surface instead of
         // getting stuck and twitching inside the pile.
@@ -201,7 +216,9 @@ impl World {
             }
         }
         match c.state {
-            CritterState::Held | CritterState::Ride => return true,
+            CritterState::Held | CritterState::Ride | CritterState::Sleep | CritterState::Fish => {
+                return true;
+            }
             CritterState::Air => {
                 c.air_time += STEP;
                 c.vy += PENGUIN_GRAVITY * sc * STEP;
@@ -269,6 +286,7 @@ impl World {
                         c.vx = 0.0;
                     }
                 } else if c.flee <= 0.0
+                    && c.goal == super::village::Goal::None
                     && !on_ice
                     && slope.abs() >= 2 * reach
                     && fastrand::u8(..) < 4
@@ -321,7 +339,13 @@ impl World {
                 let col = (nx / cell) as i32;
                 let top = self.grid.surface_from(col, ((c.y - climb) / cell) as i32) as f32 * cell;
                 let h = c.y - top;
-                if c.bumps >= 2.0 && h < 24.0 * k * 3.0 {
+                // Heading home: climb over an igloo dome to reach the door.
+                let max_hop = if matches!(c.goal, super::village::Goal::Home(_)) {
+                    400.0 * sc
+                } else {
+                    24.0 * k * 3.0
+                };
+                if c.bumps >= 2.0 && h < max_hop {
                     // Bumped around in a pit or between walls: hop up onto
                     // the wall ahead instead of pacing forever.
                     c.bumps = 0.0;
@@ -597,8 +621,11 @@ impl World {
 
     pub(crate) fn push_critters(&self, out: &mut Vec<Instance>) {
         for (i, c) in self.critters.iter().enumerate() {
-            self.push_critter(out, c, i as f32);
+            if c.state != CritterState::Sleep {
+                self.push_critter(out, c, i as f32);
+            }
         }
+        self.push_village(out);
     }
 
     fn push_critter(&self, out: &mut Vec<Instance>, c: &Critter, seed: f32) {
@@ -618,7 +645,10 @@ impl World {
                 CritterState::Held => (t * 6.0).sin() * 0.25,
                 CritterState::Fallen => c.fall_dir * 1.45,
                 CritterState::Air => -d * (c.vx / (400.0 * self.scale)).clamp(-0.5, 0.5),
-                CritterState::Idle | CritterState::Ride => 0.0,
+                CritterState::Idle
+                | CritterState::Ride
+                | CritterState::Sleep
+                | CritterState::Fish => 0.0,
             };
         // Body centre; when lying down it sits lower.
         let lying = c.state == CritterState::Fallen;

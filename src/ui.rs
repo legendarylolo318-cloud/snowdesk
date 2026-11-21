@@ -159,6 +159,7 @@ fn read_cfg(ui: &Panel, base: &Config) -> Config {
         system_audio: ui.get_system_audio(),
         season: crate::sim::season::Season::from_index(ui.get_season_index()),
         weather: ui.get_weather(),
+        penguin_village: ui.get_village(),
         icicles: ui.get_icicles(),
         frost: ui.get_frost(),
         critter: ui.get_critter(),
@@ -195,6 +196,7 @@ fn apply_cfg(ui: &Panel, c: &Config) {
     ui.set_system_audio(c.system_audio);
     ui.set_season_index(c.season.index());
     ui.set_weather(c.weather);
+    ui.set_village(c.penguin_village);
     ui.set_icicles(c.icicles);
     ui.set_frost(c.frost);
     ui.set_penguins(c.penguins.clamp(1, crate::sim::world::MAX_PENGUINS) as f32);

@@ -962,6 +962,7 @@ impl Engine {
             m.world.play = play;
             m.world.season = self.cfg.season.resolve(self.month);
             m.world.weather = self.weather.fx;
+            m.world.night = self.cfg.penguin_village && (self.hour >= 21 || self.hour < 7);
             let sc = m.spec.scale;
             if new_beats > 0 {
                 m.world.beat((bass * 4.0).clamp(0.3, 1.2));

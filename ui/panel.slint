@@ -154,6 +154,7 @@ export component Panel inherits Window {
     in-out property <int> fps-index: 1;
     in-out property <int> season-index: 0;
     in-out property <bool> weather: true;
+    in-out property <bool> village: true;
     in property <string> forecast: "";
     in-out property <bool> gusts: true;
     in-out property <bool> cursor-wind: true;
@@ -307,6 +308,7 @@ export component Panel inherits Window {
                         label: "  How many: " + round(root.penguins);
                         Sld { minimum: 1; maximum: 12; value <=> root.penguins; edited => { root.penguins = round(root.penguins); root.config-edited(); } }
                     }
+                    if root.critter: Sw { label: "  Sleep in igloos at night (9 pm - 7 am)"; checked <=> root.village; toggled => { root.config-edited(); } }
                     if root.critter: Row {
                         label: "  Size: " + round(root.penguin-size * 10) / 10 + "×";
                         Sld { minimum: 0.5; maximum: 3; value <=> root.penguin-size; edited => { root.config-edited(); } }

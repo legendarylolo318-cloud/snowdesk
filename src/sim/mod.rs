@@ -6,6 +6,7 @@ pub mod penguin;
 pub mod scene;
 pub mod season;
 pub mod sled;
+pub mod village;
 pub mod weather;
 pub mod world;
 
