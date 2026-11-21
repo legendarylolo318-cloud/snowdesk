@@ -54,6 +54,12 @@ pub struct Ball {
     pub in_snowman: bool,
     /// Thrown by a penguin (does not make penguins angry).
     pub by_penguin: bool,
+    /// Seconds of frowning left (its snowman was hit by a snowball).
+    pub frown: f32,
+    /// Random 0..1, so snowmen do not all blink in sync.
+    pub seed: f32,
+    /// Distance travelled while thrown (for the longest-throw record).
+    pub travel: f32,
 }
 
 impl Ball {
@@ -62,6 +68,7 @@ impl Ball {
             x,
             y,
             r,
+            seed: fastrand::f32(),
             ..Default::default()
         }
     }
@@ -140,6 +147,10 @@ pub fn step_balls_open(
         .collect();
     for (i, b) in balls.iter_mut().enumerate() {
         b.wobble = (b.wobble - dt).max(0.0);
+        b.frown = (b.frown - dt).max(0.0);
+        if b.thrown {
+            b.travel += b.vx.hypot(b.vy) * dt;
+        }
         if b.held {
             continue;
         }
@@ -211,6 +222,7 @@ pub fn step_balls_open(
                     other.vx += tx * m.min(1.5) * 0.8;
                     other.vy += ty * m.min(1.5) * 0.4 - 80.0;
                     other.wobble = 1.5;
+                    other.frown = 4.0;
                     continue;
                 }
                 let d = d2.sqrt();

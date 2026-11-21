@@ -628,7 +628,13 @@ impl World {
             let fresh = chain
                 .iter()
                 .any(|&i| !self.snowmen.iter().any(|s| s.contains(&i)));
+            // Hit anywhere: the whole snowman frowns.
+            let frown = chain
+                .iter()
+                .map(|&i| self.balls[i].frown)
+                .fold(0.0, f32::max);
             for &i in chain {
+                self.balls[i].frown = self.balls[i].frown.max(frown);
                 self.balls[i].in_snowman = true;
                 if fresh {
                     self.balls[i].wobble = 1.2;
@@ -844,6 +850,64 @@ impl World {
         }
     }
 
+    /// Coal eyes that follow the pointer and blink, and a mouth that
+    /// smiles, or frowns after a snowball hit.
+    fn push_face(&self, out: &mut Vec<Instance>, b: &Ball, x: f32) {
+        let eyes: Vec<(f32, f32)> = b
+            .decor
+            .iter()
+            .filter(|d| d.kind == DecorKind::Eye)
+            .map(|d| (d.dx, d.dy))
+            .collect();
+        if eyes.is_empty() {
+            return;
+        }
+        let ink = premul([0.05, 0.05, 0.08], 1.0);
+        let r = b.r;
+        // Look toward the pointer (play mode) or the desktop cursor.
+        let (lx, ly) = match self.target.or(self.cursor) {
+            Some((px, py)) => {
+                let (dx, dy) = (px - x, py - b.y);
+                let d = dx.hypot(dy).max(1.0);
+                (dx / d * r * 0.035, dy / d * r * 0.035)
+            }
+            None => (0.0, 0.0),
+        };
+        // Blink for 0.13 s every 3.5-6 s.
+        let period = 3.5 + b.seed * 2.5;
+        let blink = (self.time + b.seed * 7.0) % period < 0.13;
+        let open = if blink { 0.15 } else { 1.0 };
+        for &(dx, dy) in &eyes {
+            out.push(Instance {
+                pos: [x + dx * r + lx, b.y + dy * r + ly],
+                half: [r * 0.1, r * 0.1 * open],
+                rot: 0.0,
+                shape: SHAPE_ELLIPSE,
+                color: ink,
+            });
+        }
+        // Mouth: five coal dots under the eyes.
+        let n = eyes.len() as f32;
+        let (cx, cy) = (
+            eyes.iter().map(|e| e.0).sum::<f32>() / n,
+            eyes.iter().map(|e| e.1).sum::<f32>() / n + 0.45,
+        );
+        let curve = if b.frown > 0.0 { -0.12 } else { 0.12 };
+        for k in 0..5 {
+            let t = (k as f32 - 2.0) / 2.0; // -1..1
+            out.push(Instance {
+                pos: [
+                    x + (cx + t * 0.28) * r,
+                    b.y + (cy + curve * (1.0 - t * t)) * r,
+                ],
+                half: [r * 0.045; 2],
+                rot: 0.0,
+                shape: SHAPE_ELLIPSE,
+                color: ink,
+            });
+        }
+    }
+
     fn push_ball_instances(&self, out: &mut Vec<Instance>) {
         const SCARF: [[f32; 3]; 4] = [
             [0.9, 0.2, 0.25],
@@ -881,17 +945,12 @@ impl World {
                 shape: SHAPE_SOFT,
                 color: premul([1.0, 1.0, 1.0], 0.9),
             });
+            self.push_face(out, b, x);
             for d in &b.decor {
                 let (px, py) = (x + d.dx * b.r, b.y + d.dy * b.r);
                 let side = if d.dx >= 0.0 { 1.0 } else { -1.0 };
                 match d.kind {
-                    DecorKind::Eye => out.push(Instance {
-                        pos: [px, py],
-                        half: [b.r * 0.1; 2],
-                        rot: 0.0,
-                        shape: SHAPE_ELLIPSE,
-                        color: ink,
-                    }),
+                    DecorKind::Eye => {} // drawn by push_face
                     DecorKind::Button => out.push(Instance {
                         pos: [px, py],
                         half: [b.r * 0.09; 2],
@@ -954,5 +1013,70 @@ impl World {
             }
         }
         let _ = SHAPE_STAR;
+    }
+}
+
+#[cfg(test)]
+mod face_tests {
+    use super::*;
+    use crate::sim::balls::{Ball, Decor, DecorKind};
+
+    fn face_world() -> World {
+        let mut w = World::new(400, 400, 1.0, &Config::default());
+        let mut b = Ball::new(200.0, 200.0, 40.0);
+        for dx in [-0.3, 0.3] {
+            b.decor.push(Decor {
+                kind: DecorKind::Eye,
+                color: 0,
+                dx,
+                dy: -0.2,
+            });
+        }
+        b.seed = 0.5;
+        w.balls.push(b);
+        w
+    }
+
+    fn eye_and_mouth(w: &World) -> (Vec<Instance>, Vec<Instance>) {
+        let mut out = Vec::new();
+        w.push_face(&mut out, &w.balls[0], w.balls[0].x);
+        let (eyes, mouth): (Vec<_>, Vec<_>) = out.into_iter().partition(|i| i.half[0] > 3.0);
+        (eyes, mouth)
+    }
+
+    #[test]
+    fn eyes_follow_the_pointer() {
+        let mut w = face_world();
+        w.target = Some((400.0, 200.0)); // to the right
+        let (eyes, _) = eye_and_mouth(&w);
+        assert!(eyes[0].pos[0] > 200.0 - 0.3 * 40.0, "looks right");
+        w.target = Some((0.0, 200.0));
+        let (eyes2, _) = eye_and_mouth(&w);
+        assert!(eyes2[0].pos[0] < eyes[0].pos[0]);
+    }
+
+    #[test]
+    fn smiles_then_frowns_when_hit() {
+        let mut w = face_world();
+        let (_, smile) = eye_and_mouth(&w);
+        // Smile: middle dot lower (larger y) than the ends.
+        assert!(smile[2].pos[1] > smile[0].pos[1]);
+        w.balls[0].frown = 2.0;
+        let (_, frown) = eye_and_mouth(&w);
+        assert!(frown[2].pos[1] < frown[0].pos[1]);
+    }
+
+    #[test]
+    fn blinks_now_and_then() {
+        let mut w = face_world();
+        let mut shut = 0;
+        for i in 0..600 {
+            w.time = i as f32 * 0.02;
+            let (eyes, _) = eye_and_mouth(&w);
+            if eyes[0].half[1] < eyes[0].half[0] * 0.5 {
+                shut += 1;
+            }
+        }
+        assert!(shut > 0 && shut < 60, "blinked briefly: {shut} of 600");
     }
 }
