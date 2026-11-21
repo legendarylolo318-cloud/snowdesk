@@ -1,4 +1,5 @@
 pub mod balls;
+pub mod frost;
 pub mod grid;
 pub mod ledges;
 pub mod penguin;

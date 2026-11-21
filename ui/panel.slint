@@ -157,6 +157,9 @@ export component Panel inherits Window {
     in-out property <bool> windows-collide: true;
     in-out property <bool> music-reactive: true;
     in-out property <bool> critter: false;
+    in-out property <bool> system-audio: false;
+    in-out property <bool> icicles: true;
+    in-out property <bool> frost: false;
     in-out property <float> penguins: 1;
     in-out property <float> penguin-size: 1.0;
     in-out property <bool> lights: false;
@@ -282,6 +285,7 @@ export component Panel inherits Window {
                     Sw { label: "Cursor pushes flakes (wind)"; checked <=> root.cursor-wind; toggled => { root.config-edited(); } }
                     Sw { label: "Snow settles on windows"; checked <=> root.windows-collide; toggled => { root.config-edited(); } }
                     Sw { label: "Music-reactive snow"; checked <=> root.music-reactive; toggled => { root.config-edited(); } }
+                    if root.music-reactive: Sw { label: "  React to any music on this PC (Spotify, browser…)"; checked <=> root.system-audio; toggled => { root.config-edited(); } }
                     Sw { label: "Penguins"; checked <=> root.critter; toggled => { root.config-edited(); } }
                     if root.critter: Row {
                         label: "  How many: " + round(root.penguins);
@@ -292,6 +296,8 @@ export component Panel inherits Window {
                         Sld { minimum: 0.5; maximum: 3; value <=> root.penguin-size; edited => { root.config-edited(); } }
                     }
                     Sw { label: "String lights on windows"; checked <=> root.lights; toggled => { root.config-edited(); } }
+                    Sw { label: "Icicles on snowy windows"; checked <=> root.icicles; toggled => { root.config-edited(); } }
+                    Sw { label: "Frost on the screen corners (wipe it with the mouse)"; checked <=> root.frost; toggled => { root.config-edited(); } }
                     Sw { label: "Ice sparkles"; checked <=> root.sparkles; toggled => { root.config-edited(); } }
                     Sw { label: "Aurora at night"; checked <=> root.aurora; toggled => { root.config-edited(); } }
                     Sw { label: "Restore last scene on launch"; checked <=> root.restore-scene; toggled => { root.config-edited(); } }

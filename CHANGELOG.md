@@ -4,6 +4,34 @@ All notable changes to snowdesk are listed here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [0.3.0] - 2026-11-20
+
+### Added
+
+- Snow rides along when you move a window gently, and flies off when you
+  shake it (feeds now report window identity, and poll window geometry at
+  20 Hz for a moment after a window moves).
+- Icicles grow under snowy window edges over a few minutes, drip, and break
+  off as ice shards when a window is shaken or closed (toggle in the Snow tab).
+- Frost on the screen corners (optional): it creeps in while you are away
+  and the pointer wipes it off or writes in it. Off unless a pointer position
+  is available.
+- Penguins skate and twirl on ice, walk from one monitor to the next (and
+  thrown snowballs fly across), and start a snowball fight when you hit one:
+  it and the penguins nearby throw snowballs back at your pointer.
+- Brick tool: lay packed-snow bricks in a staggered pattern for forts. Igloo
+  button: a hollow igloo with a tunnel, sized so penguins can walk in.
+- In play mode the pointer leaves footprints where it skims the snow.
+- React to any music on the PC, not only the built-in player: Linux via the
+  speakers' monitor source (PulseAudio / pipewire-pulse), Windows via WASAPI
+  loopback. Off by default; audio is only analysed in memory.
+
+### Changed
+
+- Penguins follow the ground at their feet: they no longer jump up onto
+  window tops when walking underneath, they walk off ledges and fall, and
+  walls (bricks, steep piles) turn them around.
+
 ## [0.2.1] - 2026-11-20
 
 ### Fixed
@@ -161,6 +189,7 @@ Measured on Hyprland with two monitors (2560×1440 and 1920×1080), Radeon RX
 - The music library keeps a tag cache, so rescans of large folders only read
   new or changed files. The track list is virtualized.
 
+[0.3.0]: https://github.com/legendarylolo318-cloud/snowdesk/releases/tag/v0.3.0
 [0.2.1]: https://github.com/legendarylolo318-cloud/snowdesk/releases/tag/v0.2.1
 [0.2.0]: https://github.com/legendarylolo318-cloud/snowdesk/releases/tag/v0.2.0
 [0.1.0]: https://github.com/legendarylolo318-cloud/snowdesk/releases/tag/v0.1.0

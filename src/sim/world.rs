@@ -108,6 +108,10 @@ pub struct World {
     pub leaving_balls: Vec<(Ball, bool)>,
     /// Where angry penguins aim (the pointer in play mode).
     pub target: Option<(f32, f32)>,
+    pub frost: super::frost::Frost,
+    /// Frost may grow (a pointer position is available to wipe it).
+    pub frost_ok: bool,
+    frost_ptr: Option<(f32, f32)>,
     pub(crate) undo: Vec<Snapshot>,
     pub(crate) redo: Vec<Snapshot>,
     pub(crate) rolling: Option<usize>,
@@ -161,6 +165,9 @@ impl World {
             leaving: Vec::new(),
             leaving_balls: Vec::new(),
             target: None,
+            frost: super::frost::Frost::new(w as f32, h as f32, scale),
+            frost_ok: true,
+            frost_ptr: None,
             undo: Vec::new(),
             redo: Vec::new(),
             rolling: None,
@@ -310,7 +317,26 @@ impl World {
         if self.ticks.is_multiple_of(60) {
             self.step_icicles(1.0);
         }
+        if self.ticks.is_multiple_of(15) {
+            let on = self.cfg.frost && self.frost_ok;
+            self.frost.step(0.25, on);
+        }
         self.cursor_prev = self.cursor;
+    }
+
+    /// The pointer is at (x, y): if it moved, wipe frost there. Returns
+    /// true if it moved (the user is active).
+    pub fn frost_pointer(&mut self, x: f32, y: f32) -> bool {
+        let moved = self
+            .frost_ptr
+            .is_none_or(|(px, py)| (px - x).abs() + (py - y).abs() > 1.0);
+        if moved {
+            self.frost_ptr = Some((x, y));
+            if self.cfg.frost {
+                self.frost.wipe(x, y, 22.0 * self.scale);
+            }
+        }
+        moved
     }
 
     /// Thrown balls that flew out through an open side go to the engine.

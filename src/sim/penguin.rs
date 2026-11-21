@@ -150,13 +150,15 @@ impl World {
         c.throw_cd = (c.throw_cd - STEP).max(0.0);
         c.throw_anim = (c.throw_anim - STEP).max(0.0);
         c.spin = (c.spin - STEP).max(0.0);
-        let feet_row = (c.y / cell) as i32;
+        // The cell the feet stand on (feet sit on its top edge, give or take).
+        let feet_row = ((c.y + cell * 0.5) / cell) as i32;
         let cx = (c.x / cell) as i32;
         let on_ice = self.grid.get(cx, feet_row) == ICE;
         let reach = ((4.0 * k / cell).round() as i32).max(2);
         let from = ((c.y - climb) / cell).floor() as i32;
-        let slope =
-            self.grid.surface_from(cx + reach, from) - self.grid.surface_from(cx - reach, from);
+        let last = self.grid.w as i32 - 1;
+        let slope = self.grid.surface_from((cx + reach).clamp(0, last), from)
+            - self.grid.surface_from((cx - reach).clamp(0, last), from);
         match c.state {
             CritterState::Held => return true,
             CritterState::Air => {
@@ -718,8 +720,15 @@ mod tests {
         c.state = CritterState::Walk;
         c.dir = 1.0;
         c.t = 3.0;
+        // Keep the rink clear of the few flakes that still fall.
+        let sweep = |w: &mut World| {
+            for x in 0..w.grid.w as i32 {
+                w.grid.set(x, gh - 2, crate::sim::grid::EMPTY);
+            }
+        };
         for _ in 0..180 {
             w.step();
+            sweep(&mut w);
         }
         // Stopped walking but still sliding.
         w.critters[0].state = CritterState::Idle;
@@ -727,7 +736,12 @@ mod tests {
         let v0 = w.critters[0].vx;
         w.step();
         assert!(v0.abs() > 10.0, "built up speed on ice: {v0}");
-        assert!(w.critters[0].vx.abs() > 10.0, "glides while idle");
+        let c = &w.critters[0];
+        assert!(
+            c.vx.abs() > 10.0,
+            "glides while idle: {:?}",
+            (c.x, c.y, c.vx, c.state, c.dir, v0)
+        );
     }
 
     #[test]
@@ -763,7 +777,13 @@ mod tests {
                 break;
             }
         }
-        assert_eq!(w.leaving.len(), 1);
+        let c = w.critters.first();
+        assert_eq!(
+            w.leaving.len(),
+            1,
+            "{:?}",
+            c.map(|c| (c.x, c.y, c.state, c.dir, c.vx))
+        );
         assert!(w.leaving[0].1, "right side");
     }
 

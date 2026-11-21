@@ -107,6 +107,9 @@ impl slint::winit_030::CustomApplicationHandler for HostHandler {
 struct Ctl {
     cfg: RefCell<Config>,
     tx: Sender<OverlayCmd>,
+    audio: Sender<AudioCmd>,
+    /// A fullscreen app covers every monitor (no point listening).
+    auto_paused: Cell<bool>,
     tracks: Rc<VecModel<TrackRow>>,
     monitors: Rc<VecModel<MonitorRow>>,
     now: Cell<Option<usize>>,
@@ -116,6 +119,13 @@ struct Ctl {
 }
 
 /// Save the config 500 ms after the last edit.
+/// Run system audio capture only while it can matter.
+fn sync_capture(ctl: &Ctl) {
+    let c = ctl.cfg.borrow();
+    let on = c.system_audio && c.music_reactive && !c.paused && !ctl.auto_paused.get();
+    let _ = ctl.audio.send(AudioCmd::SystemAudio(on));
+}
+
 fn schedule_save(ctl: &Rc<Ctl>) {
     ctl.unsaved.set(true);
     let c2 = ctl.clone();
@@ -146,6 +156,9 @@ fn read_cfg(ui: &Panel, base: &Config) -> Config {
         cursor_wind: ui.get_cursor_wind(),
         windows_collide: ui.get_windows_collide(),
         music_reactive: ui.get_music_reactive(),
+        system_audio: ui.get_system_audio(),
+        icicles: ui.get_icicles(),
+        frost: ui.get_frost(),
         critter: ui.get_critter(),
         penguins: ui
             .get_penguins()
@@ -177,6 +190,9 @@ fn apply_cfg(ui: &Panel, c: &Config) {
     ui.set_windows_collide(c.windows_collide);
     ui.set_music_reactive(c.music_reactive);
     ui.set_critter(c.critter);
+    ui.set_system_audio(c.system_audio);
+    ui.set_icicles(c.icicles);
+    ui.set_frost(c.frost);
     ui.set_penguins(c.penguins.clamp(1, crate::sim::world::MAX_PENGUINS) as f32);
     ui.set_penguin_size(c.penguin_size.clamp(0.5, 3.0));
     ui.set_lights(c.string_lights);
@@ -224,6 +240,8 @@ pub fn run(
     let ui = Panel::new()?;
     let ctl = Rc::new(Ctl {
         cfg: RefCell::new(cfg.clone()),
+        audio: ch.audio_tx.clone(),
+        auto_paused: Cell::new(false),
         tx: ch.overlay_tx.clone(),
         tracks: Rc::new(VecModel::default()),
         monitors: Rc::new(VecModel::default()),
@@ -231,6 +249,7 @@ pub fn run(
         save_timer: Timer::default(),
         unsaved: Cell::new(false),
     });
+    sync_capture(&ctl);
     apply_cfg(&ui, &cfg);
     ui.set_tracks(ModelRc::from(ctl.tracks.clone()));
     ui.set_monitors(ModelRc::from(ctl.monitors.clone()));
@@ -255,6 +274,7 @@ pub fn run(
             if autostart_changed {
                 crate::autostart::set(new.autostart);
             }
+            sync_capture(&ctl);
             schedule_save(&ctl);
         });
     }
@@ -443,8 +463,13 @@ fn on_overlay_event(ui: &Panel, ctl: &Ctl, e: OverlayEvent) {
         OverlayEvent::Paused(p) => {
             ui.set_paused(p);
             ctl.cfg.borrow_mut().paused = p;
+            sync_capture(ctl);
         }
-        OverlayEvent::AutoPaused(p) => ui.set_auto_paused(p),
+        OverlayEvent::AutoPaused(p) => {
+            ui.set_auto_paused(p);
+            ctl.auto_paused.set(p);
+            sync_capture(ctl);
+        }
         OverlayEvent::Monitors(names) => {
             let off = ctl.cfg.borrow().disabled_outputs.clone();
             ctl.monitors.set_vec(
@@ -559,6 +584,9 @@ fn reload_config(ui: &Panel, ctl: &Ctl, audio: &Sender<AudioCmd>) {
     let _ = audio.send(AudioCmd::Volume(new.volume));
     let _ = audio.send(AudioCmd::Shuffle(new.shuffle));
     let _ = audio.send(AudioCmd::Repeat(new.repeat));
+    let _ = audio.send(AudioCmd::SystemAudio(
+        new.system_audio && new.music_reactive && !new.paused,
+    ));
     if new.autostart != old.autostart {
         crate::autostart::set(new.autostart);
     }

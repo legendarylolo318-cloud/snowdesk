@@ -127,6 +127,10 @@ pub struct MonitorRenderer {
     uniforms: wgpu::Buffer,
     grid_tex: wgpu::Texture,
     grid_dims: (usize, usize),
+    frost_tex: wgpu::Texture,
+    frost_dims: (u32, u32),
+    frost_pipe: wgpu::RenderPipeline,
+    sampler: wgpu::Sampler,
     bind: wgpu::BindGroup,
     layout: wgpu::BindGroupLayout,
     grid_pipe: wgpu::RenderPipeline,
@@ -212,6 +216,22 @@ impl MonitorRenderer {
                     },
                     count: None,
                 },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
             ],
         });
         let pl = dev.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -250,6 +270,7 @@ impl MonitorRenderer {
         };
         let grid_pipe = full("grid", "fs_grid");
         let aurora_pipe = full("aurora", "fs_aurora");
+        let frost_pipe = full("frost", "fs_frost");
         let attrs = wgpu::vertex_attr_array![0 => Float32x2, 1 => Float32x2, 2 => Float32, 3 => Uint32, 4 => Float32x4];
         let sprite_pipe = dev.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("sprites"),
@@ -289,7 +310,14 @@ impl MonitorRenderer {
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        let (grid_tex, bind) = Self::make_grid(&gpu, &layout, &uniforms, grid);
+        let sampler = dev.create_sampler(&wgpu::SamplerDescriptor {
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            ..Default::default()
+        });
+        let frost_tex = Self::make_frost(&gpu, 1, 1);
+        let grid_tex = Self::make_grid(&gpu, grid);
+        let bind = Self::make_bind(&gpu, &layout, &uniforms, &grid_tex, &frost_tex, &sampler);
         Ok(Self {
             gpu,
             surface,
@@ -298,6 +326,10 @@ impl MonitorRenderer {
             grid_tex,
             grid_dims: (grid.w, grid.h),
             bind,
+            frost_tex,
+            frost_dims: (1, 1),
+            frost_pipe,
+            sampler,
             layout,
             grid_pipe,
             aurora_pipe,
@@ -308,13 +340,8 @@ impl MonitorRenderer {
         })
     }
 
-    fn make_grid(
-        gpu: &Gpu,
-        layout: &wgpu::BindGroupLayout,
-        uniforms: &wgpu::Buffer,
-        grid: &Grid,
-    ) -> (wgpu::Texture, wgpu::BindGroup) {
-        let tex = gpu.device.create_texture(&wgpu::TextureDescriptor {
+    fn make_grid(gpu: &Gpu, grid: &Grid) -> wgpu::Texture {
+        gpu.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("grid"),
             size: wgpu::Extent3d {
                 width: grid.w as u32,
@@ -327,9 +354,37 @@ impl MonitorRenderer {
             format: wgpu::TextureFormat::R8Uint,
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
             view_formats: &[],
-        });
-        let view = tex.create_view(&Default::default());
-        let bind = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
+        })
+    }
+
+    fn make_frost(gpu: &Gpu, w: u32, h: u32) -> wgpu::Texture {
+        gpu.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("frost"),
+            size: wgpu::Extent3d {
+                width: w,
+                height: h,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::R8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        })
+    }
+
+    fn make_bind(
+        gpu: &Gpu,
+        layout: &wgpu::BindGroupLayout,
+        uniforms: &wgpu::Buffer,
+        grid: &wgpu::Texture,
+        frost: &wgpu::Texture,
+        sampler: &wgpu::Sampler,
+    ) -> wgpu::BindGroup {
+        let gv = grid.create_view(&Default::default());
+        let fv = frost.create_view(&Default::default());
+        gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: None,
             layout,
             entries: &[
@@ -339,11 +394,61 @@ impl MonitorRenderer {
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
-                    resource: wgpu::BindingResource::TextureView(&view),
+                    resource: wgpu::BindingResource::TextureView(&gv),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::TextureView(&fv),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::Sampler(sampler),
                 },
             ],
-        });
-        (tex, bind)
+        })
+    }
+
+    fn rebuild_bind(&mut self) {
+        self.bind = Self::make_bind(
+            &self.gpu,
+            &self.layout,
+            &self.uniforms,
+            &self.grid_tex,
+            &self.frost_tex,
+            &self.sampler,
+        );
+    }
+
+    /// Upload the frost map if it changed (it is small and changes slowly).
+    fn upload_frost(&mut self, f: &mut crate::sim::frost::Frost) {
+        if !f.dirty {
+            return;
+        }
+        f.dirty = false;
+        if self.frost_dims != (f.w, f.h) {
+            self.frost_tex = Self::make_frost(&self.gpu, f.w, f.h);
+            self.frost_dims = (f.w, f.h);
+            self.rebuild_bind();
+        }
+        self.gpu.queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &self.frost_tex,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            &f.data,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(f.w),
+                rows_per_image: Some(f.h),
+            },
+            wgpu::Extent3d {
+                width: f.w,
+                height: f.h,
+                depth_or_array_layers: 1,
+            },
+        );
     }
 
     pub fn resize(&mut self, w: u32, h: u32, grid: &mut Grid) {
@@ -353,19 +458,20 @@ impl MonitorRenderer {
             self.surface.configure(&self.gpu.device, &self.config);
         }
         if self.grid_dims != (grid.w, grid.h) {
-            let (t, b) = Self::make_grid(&self.gpu, &self.layout, &self.uniforms, grid);
-            self.grid_tex = t;
-            self.bind = b;
+            self.grid_tex = Self::make_grid(&self.gpu, grid);
             self.grid_dims = (grid.w, grid.h);
+            self.rebuild_bind();
         }
         grid.mark_all_dirty();
     }
 
     /// Render one frame. `aurora` and `sparkle` are feature strengths.
     /// Returns false if the surface needs attention (frame skipped).
+    #[allow(clippy::too_many_arguments)]
     pub fn render(
         &mut self,
         grid: &mut Grid,
+        frost: &mut crate::sim::frost::Frost,
         cell: f32,
         instances: &[Instance],
         time: f32,
@@ -376,6 +482,8 @@ impl MonitorRenderer {
             self.asleep = false;
             self.surface.configure(&self.gpu.device, &self.config);
         }
+        self.upload_frost(frost);
+        let frosty = frost.any;
         let q = &self.gpu.queue;
         // Upload only the dirty chunks.
         let gw = grid.w as u32;
@@ -457,6 +565,10 @@ impl MonitorRenderer {
             pass.set_bind_group(0, &self.bind, &[]);
             if aurora > 0.0 {
                 pass.set_pipeline(&self.aurora_pipe);
+                pass.draw(0..3, 0..1);
+            }
+            if frosty {
+                pass.set_pipeline(&self.frost_pipe);
                 pass.draw(0..3, 0..1);
             }
             // Settled snow: only shade rows that can contain snow.

@@ -8,6 +8,8 @@ struct U {
 };
 @group(0) @binding(0) var<uniform> u: U;
 @group(0) @binding(1) var gridtex: texture_2d<u32>;
+@group(0) @binding(2) var frosttex: texture_2d<f32>;
+@group(0) @binding(3) var frostsamp: sampler;
 
 struct FsIn { @builtin(position) pos: vec4<f32>, };
 
@@ -64,6 +66,21 @@ fn fs_grid(in: FsIn) -> @location(0) vec4<f32> {
     let fy = fract(in.pos.y / u.cell);
     col *= 1.0 - 0.06 * fy;
     return vec4(col, 1.0);
+}
+
+// Frost on the screen corners: a soft map with feathery crystal texture.
+@fragment
+fn fs_frost(in: FsIn) -> @location(0) vec4<f32> {
+    let f = textureSample(frosttex, frostsamp, in.pos.xy / u.res).r;
+    if (f < 0.01) { return vec4(0.0); }
+    let p = in.pos.xy;
+    let fine = hash(floor(p / 2.0));
+    let vein = abs(sin(p.x * 0.11 + sin(p.y * 0.07) * 2.5) * cos(p.y * 0.09 + sin(p.x * 0.05) * 2.0));
+    let crystal = 0.55 + 0.3 * fine + 0.25 * smoothstep(0.75, 1.0, vein);
+    let edge = smoothstep(0.0, 0.5, f) * (1.0 - smoothstep(0.5, 1.0, f));
+    let a = clamp(f * 0.36 * crystal + edge * 0.14, 0.0, 0.5);
+    let col = vec3(0.86, 0.93, 1.0);
+    return vec4(col * a, a);
 }
 
 @fragment

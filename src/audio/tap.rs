@@ -6,7 +6,7 @@ use rodio::source::SeekError;
 use rodio::{ChannelCount, Sample, SampleRate};
 use rustfft::{Fft, FftPlanner, num_complex::Complex};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::time::Duration;
 
 pub const FFT_SIZE: usize = 512;
@@ -17,6 +17,9 @@ pub struct Levels {
     bass: AtomicU32,
     /// Incremented on every detected bass hit.
     beats: AtomicU32,
+    /// System audio capture is running: it hears everything, including our
+    /// own player, so the player's tap stays quiet to avoid double beats.
+    pub external: AtomicBool,
 }
 
 impl Levels {
@@ -28,8 +31,8 @@ impl Levels {
     }
 }
 
-pub struct Tap<S: Source> {
-    inner: S,
+/// Bass-hit detector: feed it interleaved samples.
+pub struct Analyzer {
     levels: Arc<Levels>,
     fft: Arc<dyn Fft<f32>>,
     buf: Vec<Complex<f32>>,
@@ -41,12 +44,11 @@ pub struct Tap<S: Source> {
     cooldown: u32,
 }
 
-impl<S: Source> Tap<S> {
-    pub fn new(inner: S, levels: Arc<Levels>) -> Self {
+impl Analyzer {
+    pub fn new(levels: Arc<Levels>) -> Self {
         let fft = FftPlanner::new().plan_fft_forward(FFT_SIZE);
         let scratch = vec![Complex::default(); fft.get_inplace_scratch_len()];
         Self {
-            inner,
             levels,
             fft,
             buf: vec![Complex::default(); FFT_SIZE],
@@ -59,8 +61,23 @@ impl<S: Source> Tap<S> {
         }
     }
 
-    fn analyze(&mut self) {
-        let sr = self.inner.sample_rate().get() as f32;
+    #[inline]
+    pub fn push(&mut self, s: f32, channels: u16, sample_rate: u32) {
+        self.acc += s;
+        self.ch_i += 1;
+        if self.ch_i >= channels.max(1) {
+            self.buf[self.n] = Complex::new(self.acc / channels.max(1) as f32, 0.0);
+            self.acc = 0.0;
+            self.ch_i = 0;
+            self.n += 1;
+            if self.n == FFT_SIZE {
+                self.n = 0;
+                self.analyze(sample_rate as f32);
+            }
+        }
+    }
+
+    fn analyze(&mut self, sr: f32) {
         // Hann window.
         for (i, c) in self.buf.iter_mut().enumerate() {
             let w = 0.5 - 0.5 * (std::f32::consts::TAU * i as f32 / FFT_SIZE as f32).cos();
@@ -85,22 +102,29 @@ impl<S: Source> Tap<S> {
     }
 }
 
+pub struct Tap<S: Source> {
+    inner: S,
+    levels: Arc<Levels>,
+    analyzer: Analyzer,
+}
+
+impl<S: Source> Tap<S> {
+    pub fn new(inner: S, levels: Arc<Levels>) -> Self {
+        Self {
+            inner,
+            analyzer: Analyzer::new(levels.clone()),
+            levels,
+        }
+    }
+}
+
 impl<S: Source> Iterator for Tap<S> {
     type Item = Sample;
     fn next(&mut self) -> Option<Sample> {
         let s = self.inner.next()?;
-        let ch = self.inner.channels().get();
-        self.acc += s;
-        self.ch_i += 1;
-        if self.ch_i >= ch {
-            self.buf[self.n] = Complex::new(self.acc / ch as f32, 0.0);
-            self.acc = 0.0;
-            self.ch_i = 0;
-            self.n += 1;
-            if self.n == FFT_SIZE {
-                self.n = 0;
-                self.analyze();
-            }
+        if !self.levels.external.load(Ordering::Relaxed) {
+            let (ch, sr) = (self.inner.channels().get(), self.inner.sample_rate().get());
+            self.analyzer.push(s, ch, sr);
         }
         Some(s)
     }

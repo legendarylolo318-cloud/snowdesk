@@ -552,10 +552,10 @@ impl World {
         let cell = self.cell;
         let s = self.scale;
         let penguin_h = 24.0 * s * self.cfg.penguin_size.clamp(0.5, 3.0) * 1.15;
-        let r_out = (70.0 * s).max(penguin_h * 2.3);
+        let r_out = (80.0 * s).max(penguin_h * 3.2);
         let thick = (9.0 * s).max(3.0 * cell);
         let r_in = r_out - thick;
-        let door_h = penguin_h * 1.35;
+        let door_h = penguin_h * 1.25;
         let tunnel = r_out * 0.45;
         let dir = if fastrand::bool() { 1.0 } else { -1.0 };
         let x = x.clamp(r_out + tunnel + 10.0, self.w - r_out - tunnel - 10.0);

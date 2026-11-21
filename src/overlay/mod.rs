@@ -544,6 +544,11 @@ impl Engine {
                 if !self.left_down && !self.right_down {
                     self.mons[mi].world.cursor_footprint(x, y);
                 }
+                if self.mons[mi].world.frost_pointer(x, y) {
+                    for m in &mut self.mons {
+                        m.world.frost.touch();
+                    }
+                }
                 if self.left_down && self.stroke {
                     let w = &mut self.mons[mi].world;
                     match self.tool {
@@ -656,7 +661,8 @@ impl Engine {
     // ---- main step --------------------------------------------------------
 
     fn apply_feed(&mut self, snap: &Snapshot) {
-        let cursor_on = self.cfg.cursor_wind && !self.play && snap.supports_cursor;
+        let cursor_on = !self.play && snap.supports_cursor;
+        let mut active = false;
         for m in &mut self.mons {
             let s = &m.spec;
             if snap.generation != m.last_gen || m.force_windows {
@@ -699,7 +705,18 @@ impl Engine {
                 }
                 _ => None,
             };
-            m.world.set_cursor(cur);
+            m.world
+                .set_cursor(if self.cfg.cursor_wind { cur } else { None });
+            // Frost needs a pointer to wipe it: only where we can see one.
+            m.world.frost_ok = snap.supports_cursor || self.play;
+            if let Some((x, y)) = cur {
+                active |= m.world.frost_pointer(x, y);
+            }
+        }
+        if active {
+            for m in &mut self.mons {
+                m.world.frost.touch();
+            }
         }
     }
 
@@ -740,9 +757,10 @@ impl Engine {
         let all_blanked = all_off && self.mons.iter().all(|m| m.blanked);
         let sleeping = self.paused || self.mons.is_empty() || (all_blanked && !self.play);
         self.feed.active.store(!sleeping, Ordering::Relaxed);
-        self.feed
-            .cursor_wanted
-            .store(self.cfg.cursor_wind && !self.play, Ordering::Relaxed);
+        self.feed.cursor_wanted.store(
+            (self.cfg.cursor_wind || self.cfg.frost) && !self.play,
+            Ordering::Relaxed,
+        );
 
         let result = |s: &Self, sleep: Duration| Drive {
             sleep,
@@ -924,8 +942,15 @@ impl Engine {
                 Self::demo_cursor(&mut m.instances, d.cursor.0, d.cursor.1, sc);
             }
             let (cell, time) = (m.world.cell, m.world.time);
-            m.renderer
-                .render(&mut m.world.grid, cell, &m.instances, time, aurora, sparkle);
+            m.renderer.render(
+                &mut m.world.grid,
+                &mut m.world.frost,
+                cell,
+                &m.instances,
+                time,
+                aurora,
+                sparkle,
+            );
         }
         self.hand_over(&sides);
         let _ = (SHAPE_ELLIPSE, SHAPE_RECT, SHAPE_TRI, SHAPE_STAR);

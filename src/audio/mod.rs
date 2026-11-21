@@ -1,6 +1,7 @@
 //! Audio engine: runs on its own thread, owns the rodio player, the music
 //! library and a folder watcher.
 
+pub mod capture;
 pub mod library;
 pub mod tap;
 
@@ -23,6 +24,8 @@ pub enum AudioCmd {
     Volume(f32),
     Shuffle(bool),
     Repeat(bool),
+    /// Analyse all audio on the computer instead of only our player.
+    SystemAudio(bool),
     Quit,
 }
 
@@ -101,6 +104,8 @@ struct Engine {
     started: bool,
     /// Last position and when it last advanced (stall detection).
     progress: (Duration, Instant),
+    /// System audio capture, while "react to any music" is on.
+    capture: Option<capture::Capture>,
 }
 
 impl Engine {
@@ -124,6 +129,7 @@ impl Engine {
             repeat: rp,
             started: false,
             progress: (Duration::ZERO, Instant::now()),
+            capture: None,
         }
     }
 
@@ -374,6 +380,20 @@ impl Engine {
             }
             AudioCmd::Shuffle(b) => self.shuffle = b,
             AudioCmd::Repeat(b) => self.repeat = b,
+            AudioCmd::SystemAudio(on) => {
+                if on && self.capture.is_none() {
+                    match capture::start(self.levels.clone()) {
+                        Ok(c) => self.capture = Some(c),
+                        Err(e) => {
+                            let _ = self.events.send(AudioEvent::Error(format!(
+                                "Cannot listen to system audio: {e}"
+                            )));
+                        }
+                    }
+                } else if !on {
+                    self.capture = None;
+                }
+            }
         }
         true
     }

@@ -44,17 +44,25 @@ Each release includes `SHA256SUMS.txt`. Check a download with
 - Settled snow is a cellular grid (snow / packed snow / ice) that slumps at its
   angle of repose.
 - Snow settles on the screen bottom **and on the visible top edges of real
-  windows**. It falls off as particles when a window moves, minimizes or
-  closes. Snow never settles on the overlay or on snowdesk's own panel.
+  windows**. Move a window gently and its snow rides along; **shake it** and
+  the snow flies off. It also falls off when a window closes or minimizes.
+  Snow never settles on the overlay or on snowdesk's own panel.
+- **Icicles** slowly grow under snowy window edges, drip, and break off when
+  the window is shaken or closed.
+- **Frost** (optional) creeps in from the screen corners while you are away;
+  wipe it off, or write in it, with the mouse.
 - **Play mode** tools: brush, shovel, pack, freeze, melt (dripping water that
   refreezes), snowballs (roll to grow, rigid bodies, stackable), snowmen with a
   decoration palette (eyes, nose, arms, hat, scarves, buttons), quick-stamp
-  snowman, generated mountain range, right-click flick to throw, snow angels,
+  snowman, **packed-snow bricks** for forts, **igloos** penguins can walk
+  into, generated mountain range, right-click flick to throw, snow angels,
+  footprints where the pointer skims the snow,
   undo/redo (30 steps), clear, save/load scene, optional restore on launch.
 - **Penguins**: up to 12 per monitor, sized 0.5×–3×. They waddle, leave
-  footprints, sled down slopes and walk along window tops. In play mode, click
-  one to make it hop away, drag to carry it, flick to throw it, or hit it with
-  a snowball to knock it over.
+  footprints, sled down slopes, **skate and twirl on ice**, and **walk from
+  one monitor to the next**. In play mode, click one to make it hop away, drag
+  to carry it, flick to throw it. Hit one with a snowball and it falls over,
+  then it and its friends **start a snowball fight**, aiming at your pointer.
 - Festive toggles: string lights on window edges, ice sparkles and a
   night-time aurora.
 - **Music player** (rodio + symphonia) for mp3, ogg, flac, wav and m4a/aac,
@@ -62,7 +70,10 @@ Each release includes `SHA256SUMS.txt`. Check a download with
   and seek are included. Unreadable files are skipped, and playback moves to a
   new output device if the current one disappears.
 - **Music-reactive snow**: bass hits (a small FFT on the audio thread) drive
-  gusts and bursts of flakes.
+  gusts and bursts of flakes. Optionally it reacts to **any music on the PC**
+  (Spotify, a browser, games): on Linux from the speakers' monitor source
+  (PulseAudio, or PipeWire with pipewire-pulse), on Windows via WASAPI
+  loopback. The audio is only analysed in memory, never recorded.
 - **Auto-pause**: no rendering on monitors with a focused fullscreen app or
   game. With every monitor covered, nothing is simulated or rendered.
 - Tray icon, single-instance IPC, TOML config with **hot reload**, and an
@@ -81,6 +92,9 @@ Each release includes `SHA256SUMS.txt`. Check a download with
 | Play mode, while rolling | move the pointer up to lift the ball, release over a bigger ball to stack it |
 | Play mode, click a penguin | it hops and runs away |
 | Play mode, drag a penguin | carry it; let go to drop it, or flick to throw it |
+| Play mode, snowball a penguin | it falls over, then the penguins nearby throw snowballs back at the pointer |
+| Play mode, brick tool | click or drag to lay packed-snow bricks; they stack in a staggered pattern |
+| Tool bar igloo button | build an igloo (sized so the penguins fit through the door) |
 | Play mode, drag a decoration from the tool bar onto a ball | decorate a snowman |
 | Play mode, right-button flick | throw a snowball |
 | Tool bar `−` / `+` | brush radius |
@@ -171,9 +185,9 @@ the same folder.
 | Windows 10/11 | DirectComposition windows | yes (DWM bounds) | yes | yes (`SHQueryUserNotificationState`) |
 
 - **Tested** on Arch Linux + Hyprland 0.57 with two monitors (layer-shell and,
-  through XWayland, the X11 backend). The **Windows build is compiled and
-  checked in CI but has not been tried on a real Windows desktop yet**. Please
-  report problems.
+  through XWayland, the X11 backend) and on Windows. Please report problems.
+- Penguins and snowballs cross between monitors that touch side by side in
+  the desktop layout (not above/below).
 - GNOME Wayland has no layer-shell. There, snowdesk runs the panel and overlay
   through XWayland, which only sees X11 windows.
 - Non-Hyprland Wayland compositors expose no window or cursor positions to

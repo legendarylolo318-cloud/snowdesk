@@ -312,3 +312,45 @@ fn write_bench_scene() {
     let list: Vec<(&str, &World)> = worlds.iter().map(|(n, w)| (n.as_str(), w)).collect();
     std::fs::write(path, encode(&list)).unwrap();
 }
+
+/// Writes a scene with an igloo and a brick wall for the monitors in
+/// SNOWDESK_BENCH_MONS to SNOWDESK_BENCH_SCENE (visual checks).
+#[cfg(test)]
+#[test]
+#[ignore]
+fn write_igloo_scene() {
+    let (Ok(path), Ok(mons)) = (
+        std::env::var("SNOWDESK_BENCH_SCENE"),
+        std::env::var("SNOWDESK_BENCH_MONS"),
+    ) else {
+        return;
+    };
+    let cfg = crate::config::Config {
+        penguin_size: 1.6,
+        ..crate::config::Config::default()
+    };
+    let mut worlds = Vec::new();
+    for m in mons.split(',') {
+        let (name, size) = m.split_once(':').unwrap();
+        let (w, h) = size.split_once('x').unwrap();
+        let mut world = World::new(w.parse().unwrap(), h.parse().unwrap(), 1.0, &cfg);
+        let gh = world.grid.h as i32;
+        for x in 0..world.grid.w as i32 {
+            for y in gh - 8..gh {
+                world.grid.set(x, y, crate::sim::grid::PACKED);
+            }
+        }
+        world.stamp_igloo(world.w * 0.3);
+        for row in 0..4 {
+            for i in 0..6 {
+                world.place_brick(
+                    world.w * 0.7 + i as f32 * 14.0,
+                    world.h - 40.0 - row as f32 * 7.0,
+                );
+            }
+        }
+        worlds.push((name.to_string(), world));
+    }
+    let list: Vec<(&str, &World)> = worlds.iter().map(|(n, w)| (n.as_str(), w)).collect();
+    std::fs::write(path, encode(&list)).unwrap();
+}

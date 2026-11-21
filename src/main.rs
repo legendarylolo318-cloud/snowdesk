@@ -135,6 +135,11 @@ fn main() {
         cfg.shuffle,
         cfg.repeat,
     );
+    if headless {
+        let _ = audio.tx.send(audio::AudioCmd::SystemAudio(
+            cfg.system_audio && cfg.music_reactive && !cfg.paused,
+        ));
+    }
 
     let health = Arc::new(overlay::Health::default());
     watchdog(health.clone());
@@ -203,6 +208,9 @@ fn main() {
                     let _ = atx.send(audio::AudioCmd::Volume(new.volume));
                     let _ = atx.send(audio::AudioCmd::Shuffle(new.shuffle));
                     let _ = atx.send(audio::AudioCmd::Repeat(new.repeat));
+                    let _ = atx.send(audio::AudioCmd::SystemAudio(
+                        new.system_audio && new.music_reactive && !new.paused,
+                    ));
                     *last = new;
                 }
             })
