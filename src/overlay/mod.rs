@@ -855,7 +855,7 @@ impl Engine {
         if changed || now >= self.forecast_at {
             self.forecast_at = now + Duration::from_secs(20);
             let text = if self.cfg.weather {
-                self.weather.forecast()
+                self.weather.forecast(self.cfg.season.resolve(self.month))
             } else {
                 String::new()
             };

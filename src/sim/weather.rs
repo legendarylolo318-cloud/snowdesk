@@ -2,6 +2,8 @@
 //! schedule shared by every monitor. The next mood is chosen in advance so
 //! the panel can show a forecast.
 
+use super::season::Season;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Mood {
     Calm,
@@ -11,12 +13,18 @@ pub enum Mood {
 }
 
 impl Mood {
-    pub fn name(self) -> &'static str {
-        match self {
-            Mood::Calm => "Calm",
-            Mood::Normal => "Steady snow",
-            Mood::Windy => "Windy",
-            Mood::Storm => "Snowstorm",
+    pub fn name(self, season: Season) -> &'static str {
+        match (self, season) {
+            (Mood::Calm, _) => "Calm",
+            (Mood::Windy, _) => "Windy",
+            (Mood::Normal, Season::Autumn) => "Falling leaves",
+            (Mood::Normal, Season::Spring) => "Drifting petals",
+            (Mood::Normal, Season::Rain) => "Steady rain",
+            (Mood::Normal, _) => "Steady snow",
+            (Mood::Storm, Season::Autumn) => "Gale",
+            (Mood::Storm, Season::Spring) => "Blossom storm",
+            (Mood::Storm, Season::Rain) => "Downpour",
+            (Mood::Storm, _) => "Snowstorm",
         }
     }
 
@@ -143,12 +151,12 @@ impl Weather {
     }
 
     /// "Windy now · Calm in ~3 min".
-    pub fn forecast(&self) -> String {
+    pub fn forecast(&self, season: Season) -> String {
         let mins = (self.left / 60.0).ceil().max(1.0) as u32;
         format!(
             "{} now · {} in ~{} min",
-            self.mood.name(),
-            self.next.name(),
+            self.mood.name(season),
+            self.next.name(season),
             mins
         )
     }
@@ -174,7 +182,7 @@ mod tests {
                 break;
             }
         }
-        assert!(w.forecast().contains(" now · "));
+        assert!(w.forecast(Season::Rain).contains(" now · "));
         // Turned off: plain configured weather.
         w.step(1.0, false, 0.1);
         assert_eq!(w.fx, WeatherFx::default());
