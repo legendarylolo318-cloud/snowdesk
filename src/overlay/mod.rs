@@ -228,6 +228,8 @@ pub struct Engine {
     right_down: bool,
     /// Penguin pressed with the left button (play mode).
     penguin: Option<PenguinGrab>,
+    /// Sled being dragged (monitor, index).
+    sled: Option<(usize, usize)>,
     #[cfg(debug_assertions)]
     demo: Option<demo::Demo>,
     ptr_hist: VecDeque<(Instant, f32, f32)>,
@@ -275,6 +277,7 @@ impl Engine {
             shrink_when_blank: false,
             next_trim: now + Duration::from_secs(5),
             penguin: None,
+            sled: None,
             #[cfg(debug_assertions)]
             demo: demo::Demo::from_env(),
             quit: false,
@@ -332,6 +335,7 @@ impl Engine {
             self.mons.remove(i);
             self.ptr_mon = None;
             self.penguin = None;
+            self.sled = None;
             let _ = self
                 .ctx
                 .ev_tx
@@ -364,6 +368,11 @@ impl Engine {
             self.stroke = false;
             self.decor_drag = None;
             self.drop_penguin();
+            if let Some((sm, si)) = self.sled.take()
+                && let Some(m) = self.mons.get_mut(sm)
+            {
+                m.world.push_sled(si, 0.0);
+            }
             for m in &mut self.mons {
                 m.world.roll_end();
             }
@@ -539,6 +548,12 @@ impl Engine {
                 {
                     self.ptr_hist.pop_front();
                 }
+                if let Some((sm, si)) = self.sled
+                    && sm == mi
+                {
+                    self.mons[mi].world.drag_sled(si, x, y);
+                    return;
+                }
                 if let Some(g) = self.penguin.as_mut()
                     && g.mon == mi
                 {
@@ -597,6 +612,17 @@ impl Engine {
                     self.ptr_hist.push_back((now, x, y));
                     return;
                 }
+                // Sleds: drag and flick to push.
+                if let Some(i) = self.mons[mi].world.sled_at(x, y) {
+                    self.sled = Some((mi, i));
+                    self.ptr_hist.clear();
+                    self.ptr_hist.push_back((now, x, y));
+                    return;
+                }
+                if self.tool == Tool::Sled {
+                    self.mons[mi].world.place_sled(x, y);
+                    return;
+                }
                 // Existing snowballs: pick them up (the snowball tool keeps
                 // rolling them bigger).
                 if let Some(i) = self.mons[mi].world.ball_at(x, y) {
@@ -622,6 +648,14 @@ impl Engine {
                 }
             }
             Ptr::Up(Button::Left, x, y) => {
+                if let Some((sm, si)) = self.sled.take() {
+                    let (vx, _) = flick_velocity(&self.ptr_hist, now, x, y, 2600.0 * sc);
+                    if let Some(m) = self.mons.get_mut(sm) {
+                        m.world.push_sled(si, vx);
+                    }
+                    self.left_down = false;
+                    return;
+                }
                 if let Some(g) = self.penguin.take() {
                     if let Some(m) = self.mons.get_mut(g.mon) {
                         if g.dragging {

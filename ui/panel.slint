@@ -344,6 +344,7 @@ export component Panel inherits Window {
                         Btn { label: "Snowball"; active: root.tool-index == 5; clicked => { root.tool-index = 5; root.tool-selected(5); } }
                         Btn { label: "Angel"; active: root.tool-index == 6; clicked => { root.tool-index = 6; root.tool-selected(6); } }
                         Btn { label: "Bricks"; active: root.tool-index == 7; clicked => { root.tool-index = 7; root.tool-selected(7); } }
+                        Btn { label: "Sled"; active: root.tool-index == 8; clicked => { root.tool-index = 8; root.tool-selected(8); } }
                     }
                     Row { label: "Tool radius"; Sld { minimum: 6; maximum: 200; value <=> root.radius; edited => { root.radius-edited(root.radius); } } }
                     HorizontalLayout {

@@ -14,6 +14,8 @@ pub enum CritterState {
     Air,
     /// Picked up and carried by the pointer (play mode).
     Held,
+    /// Riding a sled (see `Critter::ride`).
+    Ride,
     /// Knocked over by a snowball or a hard landing; gets up again.
     Fallen,
 }
@@ -50,6 +52,8 @@ pub struct Critter {
     /// Recent wall bumps (decays over a few seconds); repeated bumps mean
     /// it is boxed in, so it hops out.
     pub bumps: f32,
+    /// Index of the sled it rides.
+    pub ride: Option<usize>,
 }
 
 const SPIN_TIME: f32 = 0.7;
@@ -85,6 +89,7 @@ impl World {
             throw_anim: 0.0,
             spin: 0.0,
             bumps: 0.0,
+            ride: None,
         }
     }
 
@@ -174,6 +179,9 @@ impl World {
         } else {
             0
         };
+        if let Some(keep) = self.ride_sled(c, k) {
+            return keep;
+        }
         // Buried: snow, ice or bricks piled up around its body (snowfall,
         // the brush, a dropped brick). Dig up to the surface instead of
         // getting stuck and twitching inside the pile.
@@ -193,7 +201,7 @@ impl World {
             }
         }
         match c.state {
-            CritterState::Held => return true,
+            CritterState::Held | CritterState::Ride => return true,
             CritterState::Air => {
                 c.air_time += STEP;
                 c.vy += PENGUIN_GRAVITY * sc * STEP;
@@ -362,6 +370,59 @@ impl World {
             }
         }
         true
+    }
+
+    /// Sled riding: hop onto a parked sled nearby now and then; while
+    /// riding, move with it and get off once it has stopped for a while.
+    /// Returns Some(keep) when it handled this step.
+    fn ride_sled(&mut self, c: &mut Critter, k: f32) -> Option<bool> {
+        if let Some(i) = c.ride {
+            let Some(d) = self.sleds.get_mut(i) else {
+                c.ride = None;
+                c.state = CritterState::Idle;
+                return None;
+            };
+            if c.state != CritterState::Ride {
+                // Picked up off the sled.
+                d.rider = false;
+                c.ride = None;
+                return None;
+            }
+            c.x = d.x;
+            c.y = d.y - 4.0 * self.scale;
+            c.dir = if d.vx.abs() > 1.0 {
+                d.vx.signum()
+            } else {
+                c.dir
+            };
+            if d.still > 3.0 {
+                d.rider = false;
+                c.ride = None;
+                c.state = CritterState::Air;
+                c.air_time = 0.0;
+                c.vx = c.dir * 50.0 * k;
+                c.vy = -220.0 * self.scale;
+            }
+            return Some(true);
+        }
+        if matches!(c.state, CritterState::Idle | CritterState::Walk)
+            && c.anger <= 0.0
+            && fastrand::u16(..) < 300
+            && let Some(i) = self
+                .sleds
+                .iter()
+                .position(|d| !d.rider && !d.held && d.still > 1.0 && (d.x - c.x).abs() < 40.0 * k)
+        {
+            let d = &mut self.sleds[i];
+            d.rider = true;
+            // A little nudge: penguins love a ride.
+            d.vx = c.dir * 60.0 * self.scale;
+            d.still = 0.0;
+            c.ride = Some(i);
+            c.state = CritterState::Ride;
+            return Some(true);
+        }
+        None
     }
 
     /// Some(true/false) if x is past an open right/left side by `margin` px.
@@ -557,7 +618,7 @@ impl World {
                 CritterState::Held => (t * 6.0).sin() * 0.25,
                 CritterState::Fallen => c.fall_dir * 1.45,
                 CritterState::Air => -d * (c.vx / (400.0 * self.scale)).clamp(-0.5, 0.5),
-                CritterState::Idle => 0.0,
+                CritterState::Idle | CritterState::Ride => 0.0,
             };
         // Body centre; when lying down it sits lower.
         let lying = c.state == CritterState::Fallen;

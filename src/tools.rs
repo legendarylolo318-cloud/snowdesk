@@ -15,6 +15,8 @@ pub enum Tool {
     Angel,
     /// Packed-snow bricks for forts and igloos.
     Brick,
+    /// Drop a sled; drag and flick a sled to push it.
+    Sled,
 }
 
 impl Tool {
@@ -28,6 +30,7 @@ impl Tool {
             5 => Tool::Snowball,
             6 => Tool::Angel,
             7 => Tool::Brick,
+            8 => Tool::Sled,
             _ => Tool::Brush,
         }
     }
@@ -130,7 +133,7 @@ impl World {
                     self.last_brick = Some((x, y));
                 }
             }
-            Tool::Snowball | Tool::Angel => {}
+            Tool::Snowball | Tool::Angel | Tool::Sled => {}
         }
     }
 

@@ -5,6 +5,7 @@ pub mod ledges;
 pub mod penguin;
 pub mod scene;
 pub mod season;
+pub mod sled;
 pub mod weather;
 pub mod world;
 

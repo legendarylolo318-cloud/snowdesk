@@ -46,6 +46,7 @@ fn groups() -> Vec<Vec<Action>> {
             Action::Tool(Tool::Snowball),
             Action::Tool(Tool::Angel),
             Action::Tool(Tool::Brick),
+            Action::Tool(Tool::Sled),
         ],
         vec![Action::Radius(-0.2), Action::Radius(0.2)],
         vec![
@@ -421,6 +422,53 @@ pub fn icon(out: &mut Vec<Instance>, action: Action, cx: f32, cy: f32, s: f32) {
                     1.0,
                 );
             }
+        }
+        Action::Tool(Tool::Sled) => {
+            let wood = [0.62, 0.38, 0.2];
+            q(
+                out,
+                cx,
+                cy + 2.0 * u,
+                11.0 * u,
+                2.2 * u,
+                0.0,
+                SHAPE_RECT,
+                wood,
+                1.0,
+            );
+            q(
+                out,
+                cx - 6.0 * u,
+                cy + 5.5 * u,
+                1.0 * u,
+                2.4 * u,
+                0.0,
+                SHAPE_RECT,
+                wood,
+                1.0,
+            );
+            q(
+                out,
+                cx + 6.0 * u,
+                cy + 5.5 * u,
+                1.0 * u,
+                2.4 * u,
+                0.0,
+                SHAPE_RECT,
+                wood,
+                1.0,
+            );
+            q(
+                out,
+                cx,
+                cy + 8.5 * u,
+                13.0 * u,
+                1.0 * u,
+                0.0,
+                SHAPE_RECT,
+                [0.35, 0.2, 0.1],
+                1.0,
+            );
         }
         Action::Igloo => {
             q(

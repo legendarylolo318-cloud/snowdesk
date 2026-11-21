@@ -97,6 +97,7 @@ pub struct World {
     pub time: f32,
     ticks: u32,
     pub critters: Vec<Critter>,
+    pub sleds: Vec<super::sled::Sled>,
     /// Play mode: the user is building, so falling cells stay cells.
     pub play: bool,
     /// Screen sides (left, right) that lead to another monitor.
@@ -169,6 +170,7 @@ impl World {
             time: 0.0,
             ticks: 0,
             critters: Vec::new(),
+            sleds: Vec::new(),
             play: false,
             open_sides: (false, false),
             shared_penguins: false,
@@ -339,6 +341,7 @@ impl World {
         if self.ticks.is_multiple_of(20) {
             self.update_snowmen();
         }
+        self.step_sleds();
         self.step_critters();
         if self.ticks.is_multiple_of(60) {
             self.step_icicles(1.0);
@@ -693,6 +696,10 @@ impl World {
         self.grid.clear_snow();
         self.balls.clear();
         self.snowmen.clear();
+        self.sleds.clear();
+        for c in &mut self.critters {
+            c.ride = None;
+        }
         self.rolling = None;
         self.reapply_walls();
     }
@@ -739,6 +746,7 @@ impl World {
         }
         self.push_ball_instances(out);
         self.push_icicles(out);
+        self.push_sleds(out);
         self.push_critters(out);
         if self.cfg.string_lights {
             self.push_lights(out);
