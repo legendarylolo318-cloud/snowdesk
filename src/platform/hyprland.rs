@@ -119,6 +119,10 @@ pub fn parse_state(clients: &str, monitors: &str) -> Option<(Vec<WinInfo>, Vec<S
                 rect,
                 monitor: mon,
                 ledge: !own,
+                id: c["address"]
+                    .as_str()
+                    .and_then(|a| u64::from_str_radix(a.trim_start_matches("0x"), 16).ok())
+                    .unwrap_or(0),
             },
         ));
     }
@@ -126,17 +130,21 @@ pub fn parse_state(clients: &str, monitors: &str) -> Option<(Vec<WinInfo>, Vec<S
     Some((wins.into_iter().map(|(_, w)| w).collect(), fullscreen))
 }
 
-fn refresh(snap: &mut Snapshot) {
+/// Returns true if the window list changed.
+fn refresh(snap: &mut Snapshot) -> bool {
     let (Some(c), Some(m)) = (request("j/clients"), request("j/monitors")) else {
-        return;
+        return false;
     };
     if let Some((w, f)) = parse_state(&c, &m) {
-        if w != snap.windows {
+        let changed = w != snap.windows;
+        if changed {
             snap.generation += 1;
         }
         snap.windows = w;
         snap.fullscreen_monitors = f;
+        return changed;
     }
+    false
 }
 
 pub fn run(shared: Arc<Shared>) {
@@ -153,7 +161,9 @@ pub fn run(shared: Arc<Shared>) {
     let mut last_cursor = Instant::now();
     let mut pacer = super::CursorPacer::new();
     let mut dirty = false;
+    let mut moving_until = Instant::now();
     while !shared.stopped() {
+        let moving = Instant::now() < moving_until;
         let active = shared.is_active();
         let want_cursor = active && shared.want_cursor();
         let tick = if want_cursor {
@@ -162,6 +172,11 @@ pub fn run(shared: Arc<Shared>) {
             Duration::from_millis(200)
         } else {
             Duration::from_millis(500)
+        };
+        let tick = if moving && active {
+            tick.min(super::MOVING_POLL)
+        } else {
+            tick
         };
         match ev.as_mut() {
             Some(s) => {
@@ -183,7 +198,9 @@ pub fn run(shared: Arc<Shared>) {
                 dirty = true;
             }
         }
-        let period = if active {
+        let period = if active && moving {
+            super::MOVING_POLL
+        } else if active {
             Duration::from_millis(400)
         } else {
             Duration::from_secs(2)
@@ -194,7 +211,9 @@ pub fn run(shared: Arc<Shared>) {
         {
             dirty = false;
             last_refresh = Instant::now();
-            refresh(&mut snap);
+            if refresh(&mut snap) {
+                moving_until = Instant::now() + super::MOVING_HOLD;
+            }
             publish = true;
         }
         if want_cursor && last_cursor.elapsed() >= pacer.interval() {

@@ -70,6 +70,7 @@ unsafe extern "system" fn enum_proc(hwnd: HWND, lp: LPARAM) -> BOOL {
             },
             monitor: None,
             ledge: !own,
+            id: hwnd as usize as u64,
         });
     }
     1
@@ -151,6 +152,7 @@ pub fn run(shared: Arc<Shared>) {
     };
     let mut last_enum: Option<std::time::Instant> = None;
     let mut pacer = super::CursorPacer::new();
+    let mut moving_until = std::time::Instant::now();
     while !shared.stopped() {
         let active = shared.is_active();
         let want_cursor = active && shared.want_cursor();
@@ -166,7 +168,12 @@ pub fn run(shared: Arc<Shared>) {
         } else if snap.cursor.take().is_some() {
             publish = true;
         }
-        let period = Duration::from_millis(if active { 400 } else { 1600 });
+        let moving = std::time::Instant::now() < moving_until;
+        let period = if active && moving {
+            super::MOVING_POLL
+        } else {
+            Duration::from_millis(if active { 400 } else { 1600 })
+        };
         if last_enum.is_none_or(|t| t.elapsed() >= period) {
             last_enum = Some(std::time::Instant::now());
             let mut ctx = Ctx {
@@ -179,6 +186,7 @@ pub fn run(shared: Arc<Shared>) {
             // EnumWindows lists top-level windows top to bottom.
             if ctx.wins != snap.windows {
                 snap.generation += 1;
+                moving_until = std::time::Instant::now() + super::MOVING_HOLD;
             }
             snap.windows = ctx.wins;
             snap.fullscreen_monitors = fullscreen_monitor().into_iter().collect();
@@ -195,6 +203,11 @@ pub fn run(shared: Arc<Shared>) {
             100
         } else {
             500
+        };
+        let ms = if active && std::time::Instant::now() < moving_until {
+            ms.min(super::MOVING_POLL.as_millis() as u64)
+        } else {
+            ms
         };
         std::thread::sleep(Duration::from_millis(ms));
     }

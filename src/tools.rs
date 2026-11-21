@@ -530,12 +530,15 @@ mod tests {
     fn rolls_on_the_ground_under_a_window() {
         let mut w = world();
         pile(&mut w);
-        w.set_windows(&[crate::sim::Rect {
-            x: 0.0,
-            y: 100.0,
-            w: 400.0,
-            h: 100.0,
-        }]);
+        w.set_windows(&[crate::sim::ledges::Ledge::whole(
+            1,
+            crate::sim::Rect {
+                x: 0.0,
+                y: 100.0,
+                w: 400.0,
+                h: 100.0,
+            },
+        )]);
         w.roll_begin(100.0, 295.0);
         for i in 0..60 {
             w.roll_move(100.0 + i as f32, 295.0);
@@ -679,8 +682,11 @@ mod tests {
             w: 200.0,
             h: 100.0,
         };
-        w.set_windows(&[a, b]);
-        w.set_windows(&[a]);
+        w.set_windows(&[
+            crate::sim::ledges::Ledge::whole(1, a),
+            crate::sim::ledges::Ledge::whole(2, b),
+        ]);
+        w.set_windows(&[crate::sim::ledges::Ledge::whole(1, a)]);
         let y0 = (200.0f32 / w.cell).round() as i32;
         for x in 12..55 {
             assert_eq!(w.grid.get(x, y0), WALL, "x {x}");
@@ -703,7 +709,7 @@ mod tests {
             w: 100.0,
             h: 100.0,
         };
-        w.set_windows(&[r]);
+        w.set_windows(&[crate::sim::ledges::Ledge::whole(1, r)]);
         for _ in 0..5 {
             w.grid.set(50, 49 - 2, SNOW); // ledge rows start at y=50
         }

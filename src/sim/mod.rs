@@ -1,5 +1,7 @@
 pub mod balls;
 pub mod grid;
+pub mod ledges;
+pub mod penguin;
 pub mod scene;
 pub mod world;
 

@@ -22,21 +22,30 @@ pub struct WinInfo {
     /// False for windows that only hide what is behind them but never hold
     /// snow themselves (our own control panel).
     pub ledge: bool,
+    /// Stable identity (Hyprland address, X11 window id, HWND), so snow can
+    /// travel with a window that moves.
+    pub id: u64,
 }
+
+/// After a window moves, poll window geometry this often for a moment so a
+/// drag or a shake is tracked smoothly (feeds otherwise poll every 400 ms).
+pub const MOVING_POLL: std::time::Duration = std::time::Duration::from_millis(50);
+/// How long to keep polling fast after the last change.
+pub const MOVING_HOLD: std::time::Duration = std::time::Duration::from_millis(700);
 
 /// Visible parts of each window's top edge, given rects ordered front to
 /// back. An edge is hidden where a window in front covers the band from
 /// `margin` above the edge (where snow piles up) down to the edge.
-pub fn visible_ledges(wins: &[(Rect, bool)], margin: f32) -> Vec<Rect> {
+pub fn visible_ledges(wins: &[(Rect, bool, u64)], margin: f32) -> Vec<crate::sim::ledges::Ledge> {
     let mut out = Vec::new();
     let mut spans: Vec<(f32, f32)> = Vec::new();
-    for (i, &(r, ledge)) in wins.iter().enumerate() {
+    for (i, &(r, ledge, id)) in wins.iter().enumerate() {
         if !ledge || r.w <= 0.0 {
             continue;
         }
         spans.clear();
         spans.push((r.x, r.x + r.w));
-        for &(o, _) in &wins[..i] {
+        for &(o, _, _) in &wins[..i] {
             if !(o.y <= r.y + 1.0 && o.y + o.h > r.y - margin) {
                 continue;
             }
@@ -59,11 +68,15 @@ pub fn visible_ledges(wins: &[(Rect, bool)], margin: f32) -> Vec<Rect> {
                 break;
             }
         }
-        out.extend(spans.iter().map(|&(s0, s1)| Rect {
-            x: s0,
-            y: r.y,
-            w: s1 - s0,
-            h: r.h,
+        out.extend(spans.iter().map(|&(s0, s1)| crate::sim::ledges::Ledge {
+            id,
+            rect: Rect {
+                x: s0,
+                y: r.y,
+                w: s1 - s0,
+                h: r.h,
+            },
+            win: r,
         }));
     }
     out
@@ -249,10 +262,10 @@ mod tests {
     fn front_window_hides_part_of_edge_behind() {
         // Front window covers the middle of the back window's top edge.
         let wins = [
-            (r(300.0, 50.0, 200.0, 400.0), true),
-            (r(100.0, 100.0, 600.0, 300.0), true),
+            (r(300.0, 50.0, 200.0, 400.0), true, 1),
+            (r(100.0, 100.0, 600.0, 300.0), true, 2),
         ];
-        let v = visible_ledges(&wins, 10.0);
+        let v: Vec<Rect> = visible_ledges(&wins, 10.0).iter().map(|l| l.rect).collect();
         assert_eq!(v[0], r(300.0, 50.0, 200.0, 400.0));
         assert_eq!(
             &v[1..],
@@ -263,8 +276,8 @@ mod tests {
     #[test]
     fn window_below_edge_does_not_hide_it() {
         let wins = [
-            (r(0.0, 500.0, 900.0, 100.0), true),
-            (r(100.0, 100.0, 300.0, 300.0), true),
+            (r(0.0, 500.0, 900.0, 100.0), true, 1),
+            (r(100.0, 100.0, 300.0, 300.0), true, 2),
         ];
         assert_eq!(visible_ledges(&wins, 10.0).len(), 2);
     }
@@ -272,12 +285,13 @@ mod tests {
     #[test]
     fn panel_occludes_but_holds_no_snow() {
         let wins = [
-            (r(0.0, 0.0, 400.0, 400.0), false),
-            (r(100.0, 100.0, 600.0, 300.0), true),
+            (r(0.0, 0.0, 400.0, 400.0), false, 1),
+            (r(100.0, 100.0, 600.0, 300.0), true, 2),
         ];
-        assert_eq!(
-            visible_ledges(&wins, 10.0),
-            vec![r(400.0, 100.0, 300.0, 300.0)]
-        );
+        let v = visible_ledges(&wins, 10.0);
+        assert_eq!(v.len(), 1);
+        assert_eq!(v[0].rect, r(400.0, 100.0, 300.0, 300.0));
+        assert_eq!(v[0].id, 2);
+        assert_eq!(v[0].win, r(100.0, 100.0, 600.0, 300.0));
     }
 }

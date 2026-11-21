@@ -31,6 +31,12 @@ pub struct Config {
     /// Penguin size multiplier (0.5 ..= 3.0).
     pub penguin_size: f32,
     pub string_lights: bool,
+    /// Icicles grow under snowy window ledges.
+    pub icicles: bool,
+    /// Frost creeps in from the screen corners while you are idle.
+    pub frost: bool,
+    /// React to any audio playing on the computer, not only our player.
+    pub system_audio: bool,
     pub sparkles: bool,
     pub aurora: bool,
     pub restore_scene: bool,
@@ -59,6 +65,9 @@ impl Default for Config {
             penguins: 1,
             penguin_size: 1.0,
             string_lights: false,
+            icicles: true,
+            frost: false,
+            system_audio: false,
             sparkles: false,
             aurora: false,
             restore_scene: false,

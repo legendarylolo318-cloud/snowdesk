@@ -8,6 +8,8 @@ pub const PACKED: u8 = 2;
 pub const ICE: u8 = 3;
 /// Window ledge / solid obstacle. Never drawn, never moves.
 pub const WALL: u8 = 4;
+/// Packed-snow brick placed by the user: never falls or slumps.
+pub const BRICK: u8 = 5;
 
 pub const CHUNK: usize = 32;
 

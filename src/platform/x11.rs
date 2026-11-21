@@ -85,6 +85,7 @@ fn refresh(c: &RustConnection, root: u32, a: &Atoms, own_pid_class: &str) -> (Ve
             },
             monitor: None,
             ledge: !own,
+            id: w as u64,
         });
     }
     (wins, any_fs)
@@ -120,15 +121,23 @@ pub fn run(shared: Arc<Shared>) {
     };
     let mut last = Instant::now() - Duration::from_secs(10);
     let mut pacer = super::CursorPacer::new();
+    let mut moving_until = Instant::now();
     while !shared.stopped() {
+        let moving = Instant::now() < moving_until;
         let active = shared.is_active();
         let want_cursor = active && shared.want_cursor();
         let mut publish = false;
-        if last.elapsed() > Duration::from_millis(if active { 400 } else { 1500 }) {
+        let period = if active && moving {
+            super::MOVING_POLL
+        } else {
+            Duration::from_millis(if active { 400 } else { 1500 })
+        };
+        if last.elapsed() > period {
             last = Instant::now();
             let (w, fs) = refresh(&c, root, &atoms, "snowdesk");
             if w != snap.windows {
                 snap.generation += 1;
+                moving_until = Instant::now() + super::MOVING_HOLD;
             }
             snap.windows = w;
             snap.fullscreen_any = fs;
@@ -150,12 +159,17 @@ pub fn run(shared: Arc<Shared>) {
         if publish {
             shared.publish(snap.clone());
         }
-        std::thread::sleep(if want_cursor {
+        let nap = if want_cursor {
             pacer.interval()
         } else if active {
             Duration::from_millis(100)
         } else {
             Duration::from_millis(500)
+        };
+        std::thread::sleep(if moving && active {
+            nap.min(super::MOVING_POLL)
+        } else {
+            nap
         });
     }
 }

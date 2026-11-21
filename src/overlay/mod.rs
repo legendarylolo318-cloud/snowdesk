@@ -669,7 +669,7 @@ impl Engine {
                             w: r.w * f,
                             h: r.h * f,
                         };
-                        local.push((rect, w.ledge));
+                        local.push((rect, w.ledge, w.id));
                     }
                 }
                 let margin = 3.0 * m.world.cell;
