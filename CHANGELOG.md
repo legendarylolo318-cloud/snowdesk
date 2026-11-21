@@ -4,6 +4,23 @@ All notable changes to snowdesk are listed here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- Pick up existing snowballs in play mode: click one to carry it, let go to
+  drop it (onto a bigger ball to stack it), or flick to throw it. With the
+  snowball tool, clicking a ball keeps rolling it bigger.
+
+### Fixed
+
+- Penguins glitched inside snow, ice or bricks: covered by snowfall or a
+  build, they were blocked both ways and flipped direction every frame. They
+  now dig up to the surface. Walls on both sides of a pit or a gap between
+  bricks read as a steep slope, so penguins sledded back and forth forever;
+  sledding now needs a real slope, and a penguin that keeps bumping into
+  walls hops out.
+
 ## [0.3.0] - 2026-11-20
 
 ### Added

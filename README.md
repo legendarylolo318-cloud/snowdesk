@@ -90,6 +90,7 @@ Each release includes `SHA256SUMS.txt`. Check a download with
 | Play mode, left button | use the selected tool (tool bar at the top of each screen) |
 | Play mode, snowball tool | press and drag along the snow to roll a ball; it grows as it picks up snow |
 | Play mode, while rolling | move the pointer up to lift the ball, release over a bigger ball to stack it |
+| Play mode, click an existing snowball | pick it up and carry it; let go to drop it (it stacks onto a bigger ball), flick to throw it. With the snowball tool, keep rolling it bigger |
 | Play mode, click a penguin | it hops and runs away |
 | Play mode, drag a penguin | carry it; let go to drop it, or flick to throw it |
 | Play mode, snowball a penguin | it falls over, then the penguins nearby throw snowballs back at the pointer |

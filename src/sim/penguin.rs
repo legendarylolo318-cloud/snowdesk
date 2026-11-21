@@ -47,6 +47,9 @@ pub struct Critter {
     pub throw_anim: f32,
     /// Pirouette time left (skating on ice).
     pub spin: f32,
+    /// Recent wall bumps (decays over a few seconds); repeated bumps mean
+    /// it is boxed in, so it hops out.
+    pub bumps: f32,
 }
 
 const SPIN_TIME: f32 = 0.7;
@@ -81,6 +84,7 @@ impl World {
             throw_cd: 0.0,
             throw_anim: 0.0,
             spin: 0.0,
+            bumps: 0.0,
         }
     }
 
@@ -150,6 +154,7 @@ impl World {
         c.throw_cd = (c.throw_cd - STEP).max(0.0);
         c.throw_anim = (c.throw_anim - STEP).max(0.0);
         c.spin = (c.spin - STEP).max(0.0);
+        c.bumps = (c.bumps - STEP * 0.3).max(0.0);
         // The cell the feet stand on (feet sit on its top edge, give or take).
         let feet_row = ((c.y + cell * 0.5) / cell) as i32;
         let cx = (c.x / cell) as i32;
@@ -157,8 +162,36 @@ impl World {
         let reach = ((4.0 * k / cell).round() as i32).max(2);
         let from = ((c.y - climb) / cell).floor() as i32;
         let last = self.grid.w as i32 - 1;
-        let slope = self.grid.surface_from((cx + reach).clamp(0, last), from)
-            - self.grid.surface_from((cx - reach).clamp(0, last), from);
+        let here = self.grid.surface_from(cx.clamp(0, last), from);
+        let right = self.grid.surface_from((cx + reach).clamp(0, last), from);
+        let left = self.grid.surface_from((cx - reach).clamp(0, last), from);
+        // A real slope rises on one side and falls on the other. Walls on
+        // both sides (a pit, a gap between bricks) are not something to sled
+        // down; reading them as a slope made penguins sled back and forth
+        // forever.
+        let slope = if (left < here && right > here) || (left > here && right < here) {
+            right - left
+        } else {
+            0
+        };
+        // Buried: snow, ice or bricks piled up around its body (snowfall,
+        // the brush, a dropped brick). Dig up to the surface instead of
+        // getting stuck and twitching inside the pile.
+        if !matches!(c.state, CritterState::Held | CritterState::Air) {
+            // Deeper than it can step: a normal uphill step is not "buried".
+            let body_row = ((c.y - climb - cell) / cell).floor() as i32;
+            let on_screen = cx >= 0 && cx < self.grid.w as i32;
+            if on_screen && body_row >= 0 && self.grid.get(cx, body_row) != EMPTY {
+                let top = self.grid.surface_from(cx, body_row) as f32 * cell;
+                c.y = (c.y - 140.0 * k * STEP).max(top);
+                c.vx = 0.0;
+                if c.state == CritterState::Sled {
+                    c.state = CritterState::Idle;
+                    c.t = 0.5;
+                }
+                return true;
+            }
+        }
         match c.state {
             CritterState::Held => return true,
             CritterState::Air => {
@@ -274,10 +307,27 @@ impl World {
             self.penguin_ground(nx, c.y, climb)
         };
         match ground {
-            // A wall (igloo, brick fort, steep pile): turn around.
+            // A wall (igloo, brick fort, steep pile).
             None => {
-                c.dir = -c.dir;
-                c.vx = -c.vx * 0.3;
+                c.bumps += 1.0;
+                let col = (nx / cell) as i32;
+                let top = self.grid.surface_from(col, ((c.y - climb) / cell) as i32) as f32 * cell;
+                let h = c.y - top;
+                if c.bumps >= 2.0 && h < 24.0 * k * 3.0 {
+                    // Bumped around in a pit or between walls: hop up onto
+                    // the wall ahead instead of pacing forever.
+                    c.bumps = 0.0;
+                    c.state = CritterState::Air;
+                    c.air_time = 0.0;
+                    c.vy = -(2.0 * PENGUIN_GRAVITY * sc * (h + 4.0 * k) * 1.3).sqrt();
+                    c.vx = c.dir * 70.0 * k;
+                } else {
+                    // Turn around and pause a moment (no rapid flip-flop).
+                    c.dir = -c.dir;
+                    c.vx = 0.0;
+                    c.state = CritterState::Idle;
+                    c.t = 0.4 + fastrand::f32() * 0.6;
+                }
             }
             Some(target) => {
                 c.x = nx;
@@ -807,5 +857,98 @@ mod tests {
             w.critters[0].t = 100.0;
             assert!(w.critters[0].x < 400.0, "went through/over the wall");
         }
+    }
+
+    /// Regression: penguins covered by snow, ice or bricks twitched in
+    /// place forever (blocked both ways, flipping direction every frame).
+    #[test]
+    fn buried_penguin_digs_out() {
+        for material in [
+            crate::sim::grid::SNOW,
+            crate::sim::grid::ICE,
+            crate::sim::grid::BRICK,
+        ] {
+            let mut w = world(1, 1.0);
+            let gh = w.grid.h as i32;
+            w.critters[0].x = 300.0;
+            w.critters[0].y = gh as f32 * w.cell;
+            w.critters[0].state = CritterState::Walk;
+            // Bury it under 20 rows across a wide stretch.
+            for x in 50..110 {
+                for y in gh - 20..gh {
+                    w.grid.set(x, y, material);
+                }
+            }
+            let top = (gh - 20) as f32 * w.cell;
+            let mut flips = 0;
+            let mut last_dir = w.critters[0].dir;
+            let mut surfaced = false;
+            for _ in 0..180 {
+                w.step();
+                let c = &w.critters[0];
+                surfaced |= c.y <= top + 5.0;
+                if c.dir != last_dir {
+                    flips += 1;
+                    last_dir = c.dir;
+                }
+            }
+            let c = &w.critters[0];
+            assert!(surfaced, "dug out of {material}");
+            // Never left inside the pile (it may have walked down its slope).
+            let body = ((c.y - 16.0) / w.cell) as i32;
+            assert_eq!(
+                w.grid.get((c.x / w.cell) as i32, body),
+                crate::sim::grid::EMPTY,
+                "{material}: ended inside at ({}, {})",
+                c.x,
+                c.y
+            );
+            assert!(flips < 10, "no flip-flopping: {flips}");
+        }
+    }
+
+    #[test]
+    fn penguin_in_a_pit_hops_out() {
+        let mut w = world(1, 1.0);
+        let gh = w.grid.h as i32;
+        let col = (300.0 / w.cell) as i32;
+        // Narrow pit: walls 6 rows high on both sides.
+        for y in gh - 6..gh {
+            for x in col - 8..col - 3 {
+                w.grid.set(x, y, crate::sim::grid::BRICK);
+            }
+            for x in col + 3..col + 8 {
+                w.grid.set(x, y, crate::sim::grid::BRICK);
+            }
+        }
+        let c = &mut w.critters[0];
+        c.x = 300.0;
+        c.y = gh as f32 * w.cell;
+        c.state = CritterState::Walk;
+        c.t = 100.0;
+        let wall_top = (gh - 6) as f32 * w.cell;
+        let mut escaped = false;
+        for n in 0..60 * 20 {
+            w.step();
+            let c = &w.critters[0];
+            if std::env::var_os("TRACE").is_some() && n % 6 == 0 {
+                eprintln!(
+                    "{n} x {:.1} y {:.1} {:?} dir {} vx {:.0} vy {:.0} bumps {:.2}",
+                    c.x, c.y, c.state, c.dir, c.vx, c.vy, c.bumps
+                );
+            }
+            // Standing on a wall top, or outside the pit.
+            if (c.y <= wall_top + 1.0 && c.state != CritterState::Air) || (c.x - 300.0).abs() > 40.0
+            {
+                escaped = true;
+                break;
+            }
+        }
+        let c = &w.critters[0];
+        assert!(
+            escaped,
+            "stuck in the pit at ({}, {}) {:?}",
+            c.x, c.y, c.state
+        );
     }
 }

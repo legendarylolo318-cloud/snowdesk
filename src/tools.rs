@@ -146,6 +146,14 @@ impl World {
 
     pub fn roll_move(&mut self, x: f32, y: f32) {
         let Some(i) = self.rolling else { return };
+        if let Some((ox, oy)) = self.carry {
+            // Carried: follow the pointer exactly.
+            let r = self.balls[i].r;
+            let b = &mut self.balls[i];
+            b.x = (x - ox).clamp(r, self.w - r);
+            b.y = (y - oy).clamp(r, self.h - r);
+            return;
+        }
         let cell = self.cell;
         let (old_x, mut r) = (self.balls[i].x, self.balls[i].r);
         // Follow the cursor horizontally, sit on the snow surface.
@@ -200,10 +208,51 @@ impl World {
     }
 
     pub fn roll_end(&mut self) {
+        self.roll_end_with(0.0, 0.0);
+    }
+
+    /// Ball under (x, y) that can be picked up (not a flying throw).
+    pub fn ball_at(&self, x: f32, y: f32) -> Option<usize> {
+        self.balls
+            .iter()
+            .enumerate()
+            .rev()
+            .find(|(_, b)| !b.thrown && (b.x - x).hypot(b.y - y) <= b.r.max(10.0 * self.scale))
+            .map(|(i, _)| i)
+    }
+
+    /// Pick up an existing ball. `roll`: keep rolling it (it grows, snowball
+    /// tool); otherwise carry it as it is.
+    pub fn grab_ball(&mut self, i: usize, x: f32, y: f32, roll: bool) {
+        let Some(b) = self.balls.get_mut(i) else {
+            return;
+        };
+        b.held = true;
+        b.vx = 0.0;
+        b.vy = 0.0;
+        self.carry = (!roll).then_some((x - b.x, y - b.y));
+        self.rolling = Some(i);
+        self.removed_acc = 0.0;
+    }
+
+    /// Let go of the rolled/carried ball. A fast flick throws a carried
+    /// ball (it splats on impact, like a right-click throw).
+    pub fn roll_end_with(&mut self, vx: f32, vy: f32) {
         self.last_brick = None;
+        let carried = self.carry.take().is_some();
         let Some(i) = self.rolling.take() else {
             return;
         };
+        if carried && vx.hypot(vy) > 600.0 * self.scale {
+            if let Some(b) = self.balls.get_mut(i) {
+                b.held = false;
+                b.thrown = true;
+                b.decor.clear();
+                b.vx = vx;
+                b.vy = vy;
+            }
+            return;
+        }
         let Some(b) = self.balls.get(i) else {
             return;
         };
@@ -698,6 +747,58 @@ mod tests {
         // Pointer up on the window: the ball goes onto the ledge.
         w.roll_move(200.0, 90.0);
         assert!(w.balls[0].y < 110.0, "on the ledge, y {}", w.balls[0].y);
+    }
+
+    #[test]
+    fn old_snowballs_can_be_picked_up_carried_and_thrown() {
+        let mut w = World::new(
+            400,
+            400,
+            1.0,
+            &Config {
+                intensity: 0.0,
+                ..Config::default()
+            },
+        );
+        w.balls.push(Ball::new(100.0, 400.0 - 20.0, 20.0));
+        let i = w.ball_at(105.0, 385.0).expect("clicked the ball");
+        w.grab_ball(i, 105.0, 385.0, false);
+        w.roll_move(305.0, 205.0);
+        assert!((w.balls[0].x - 300.0).abs() < 0.5 && (w.balls[0].y - 200.0).abs() < 0.5);
+        assert!(
+            (w.balls[0].r - 20.0).abs() < 0.01,
+            "carrying does not grow it"
+        );
+        // Gentle release: it falls and stays a ball.
+        w.roll_end_with(30.0, 0.0);
+        for _ in 0..120 {
+            w.step();
+        }
+        assert_eq!(w.balls.len(), 1);
+        assert!(w.balls[0].y > 350.0, "dropped to the ground");
+        // Pick it up again and flick it: thrown, it splats.
+        let i = w.ball_at(w.balls[0].x, w.balls[0].y).unwrap();
+        let (x, y) = (w.balls[0].x, w.balls[0].y);
+        w.grab_ball(i, x, y, false);
+        w.roll_end_with(-1500.0, -300.0);
+        assert!(w.balls[0].thrown);
+        for _ in 0..180 {
+            w.step();
+        }
+        assert!(w.balls.is_empty(), "splatted");
+    }
+
+    #[test]
+    fn snowball_tool_keeps_rolling_an_old_ball() {
+        let mut w = world();
+        pile(&mut w);
+        w.balls.push(Ball::new(150.0, 300.0 - 10.0, 10.0));
+        w.grab_ball(0, 150.0, 295.0, true);
+        for i in 0..120 {
+            w.roll_move(150.0 + i as f32, 295.0);
+        }
+        w.roll_end();
+        assert!(w.balls[0].r > 15.0, "grew: {}", w.balls[0].r);
     }
 
     /// Lift a rolled ball above another one and let go: they stack into a

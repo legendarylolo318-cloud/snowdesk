@@ -551,9 +551,11 @@ impl Engine {
                 }
                 if self.left_down && self.stroke {
                     let w = &mut self.mons[mi].world;
-                    match self.tool {
-                        Tool::Snowball => w.roll_move(x, y),
-                        t => w.apply_tool(t, x, y, radius_px),
+                    if w.rolling.is_some() {
+                        // Rolling a new ball or carrying an old one.
+                        w.roll_move(x, y);
+                    } else if self.tool != Tool::Snowball {
+                        w.apply_tool(self.tool, x, y, radius_px);
                     }
                 }
             }
@@ -580,6 +582,17 @@ impl Engine {
                         start: (x, y),
                         dragging: false,
                     });
+                    self.ptr_hist.clear();
+                    self.ptr_hist.push_back((now, x, y));
+                    return;
+                }
+                // Existing snowballs: pick them up (the snowball tool keeps
+                // rolling them bigger).
+                if let Some(i) = self.mons[mi].world.ball_at(x, y) {
+                    let w = &mut self.mons[mi].world;
+                    w.push_undo();
+                    w.grab_ball(i, x, y, self.tool == Tool::Snowball);
+                    self.stroke = true;
                     self.ptr_hist.clear();
                     self.ptr_hist.push_back((now, x, y));
                     return;
@@ -614,7 +627,8 @@ impl Engine {
                     self.mons[mi].world.decorate_at(x, y, k, c);
                 }
                 if self.stroke {
-                    self.mons[mi].world.roll_end();
+                    let (vx, vy) = flick_velocity(&self.ptr_hist, now, x, y, 2600.0 * sc);
+                    self.mons[mi].world.roll_end_with(vx, vy);
                 }
                 self.left_down = false;
                 self.stroke = false;
@@ -895,6 +909,7 @@ impl Engine {
             }
             if held
                 && ptr.0 == Some(i)
+                && m.world.rolling.is_none()
                 && let Tool::Brush | Tool::Shovel | Tool::Pack | Tool::Freeze | Tool::Melt = tool
             {
                 m.world.apply_tool(tool, ptr.1.0, ptr.1.1, radius * sc);

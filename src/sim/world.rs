@@ -115,6 +115,9 @@ pub struct World {
     pub(crate) undo: Vec<Snapshot>,
     pub(crate) redo: Vec<Snapshot>,
     pub(crate) rolling: Option<usize>,
+    /// The ball in `rolling` is being carried (picked up), not rolled:
+    /// it follows the pointer at this offset and does not scoop snow.
+    pub(crate) carry: Option<(f32, f32)>,
     /// Where the last brick of the current drag went (brick tool).
     pub(crate) last_brick: Option<(f32, f32)>,
     /// Last cursor footprint (play mode) and which foot made it.
@@ -171,6 +174,7 @@ impl World {
             undo: Vec::new(),
             redo: Vec::new(),
             rolling: None,
+            carry: None,
             last_brick: None,
             last_print: None,
             print_left: false,
