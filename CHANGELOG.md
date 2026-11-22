@@ -4,6 +4,44 @@ All notable changes to snowdesk are listed here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [0.5.0] - 2026-11-22
+
+Easier to use.
+
+### Added
+
+- Presets on the Snow tab and in the tray: Cozy, Blizzard, Minimal (light
+  on the CPU, GPU and battery) and Party. A preset changes only the look,
+  never your monitors, music, volume or autostart.
+- Undo for settings ("↶ Undo change", up to 30 steps; a slider drag is one
+  step) and a Reset button for each section of the Snow tab (Snowfall,
+  Penguins, Extras).
+- Tooltips: hover over any button, switch or slider in the panel for a short
+  explanation. The in-overlay tool bar shows a label under the hovered
+  button too, with the tool's number key.
+- Play mode keys: 1-9 pick a tool, the mouse wheel changes the brush size.
+  The panel's tool buttons and radius slider follow along.
+- "Add music…" picks music files with the system file dialog and copies them
+  into the music folder. On X11 and Windows you can also drop files onto the
+  panel.
+- "Use my music folder…" / "Change folder…" plays an existing folder (e.g.
+  your Music folder) without copying anything; "Use default" switches back.
+  Stored as `music_dir` in config.toml.
+- "Load a friend's scene…" opens a file dialog for `.snowscene` files.
+  `snowdesk path/to/file.snowscene` (and "Open with snowdesk") loads a scene
+  into the running instance, or starts snowdesk and loads it.
+- Richer tray menu: the current song, play/pause music, next track, snow
+  amount, season and preset submenus, and "Hide snow for 1 hour" (the
+  scene is kept and comes back by itself; "Show snow again" brings it back
+  early). The panel has the same Hide button.
+
+### Changed
+
+- Loading a scene switches the panel to the Play & tools tab, so you see
+  whether it worked.
+- The config file is never replaced with an empty one if it cannot be
+  written.
+
 ## [0.4.0] - 2026-11-20
 
 ### Added

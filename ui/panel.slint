@@ -12,6 +12,28 @@ global Theme {
     out property <color> good: #9ece6a;
 }
 
+// Hover help: controls report their tip and position here; the panel draws
+// one tooltip near the hovered control after a short delay.
+global Tip {
+    in-out property <string> text;
+    in-out property <bool> shown;
+    in-out property <length> cx;
+    in-out property <length> bottom;
+    in-out property <length> top;
+    public function hover(on: bool, t: string, cx: length, top: length, bottom: length) {
+        if (on && t != "") {
+            self.text = t;
+            self.shown = false;
+            self.cx = cx;
+            self.top = top;
+            self.bottom = bottom;
+        } else if (!on && self.text == t) {
+            self.text = "";
+            self.shown = false;
+        }
+    }
+}
+
 export struct MonitorRow { name: string, enabled: bool }
 export struct TrackRow { title: string, artist: string, length: string, playing: bool }
 
@@ -19,6 +41,8 @@ component Btn inherits Rectangle {
     in property <string> label;
     in property <bool> active: false;
     in property <bool> danger: false;
+    in property <bool> enabled: true;
+    in property <string> tip;
     callback clicked();
     height: 32px;
     min-width: 36px;
@@ -26,17 +50,23 @@ component Btn inherits Rectangle {
     background: ta.pressed ? Theme.accent.darker(0.2) : active ? Theme.accent : ta.has-hover ? Theme.surface2 : Theme.surface;
     Text {
         text: root.label;
-        color: root.active ? Theme.bg : root.danger ? Theme.urgent : Theme.text;
+        color: !root.enabled ? Theme.muted : root.active ? Theme.bg : root.danger ? Theme.urgent : Theme.text;
         font-size: 13px;
         horizontal-alignment: center;
         vertical-alignment: center;
     }
-    ta := TouchArea { clicked => { root.clicked(); } }
+    ta := TouchArea {
+        enabled: root.enabled;
+        // The button may disappear on click: never leave its tip behind.
+        clicked => { Tip.text = ""; root.clicked(); }
+        changed has-hover => { Tip.hover(self.has-hover, root.tip, root.absolute-position.x + root.width / 2, root.absolute-position.y, root.absolute-position.y + root.height); }
+    }
 }
 
 component Sw inherits Rectangle {
     in-out property <bool> checked;
     in property <string> label;
+    in property <string> tip;
     callback toggled(bool);
     height: 28px;
     HorizontalLayout {
@@ -56,13 +86,17 @@ component Sw inherits Rectangle {
         }
         Text { text: root.label; color: Theme.text; font-size: 13px; vertical-alignment: center; }
     }
-    TouchArea { clicked => { root.checked = !root.checked; root.toggled(root.checked); } }
+    TouchArea {
+        clicked => { Tip.text = ""; root.checked = !root.checked; root.toggled(root.checked); }
+        changed has-hover => { Tip.hover(self.has-hover, root.tip, root.absolute-position.x + root.width / 2, root.absolute-position.y, root.absolute-position.y + root.height); }
+    }
 }
 
 component Sld inherits Rectangle {
     in-out property <float> value;
     in property <float> minimum: 0;
     in property <float> maximum: 1;
+    in property <string> tip;
     callback edited(float);
     height: 22px;
     property <float> frac: maximum > minimum ? (value - minimum) / (maximum - minimum) : 0;
@@ -82,6 +116,7 @@ component Sld inherits Rectangle {
         }
         pointer-event(e) => { if (e.button == PointerEventButton.left && e.kind == PointerEventKind.down) { set(); } }
         moved => { if (self.pressed) { set(); } }
+        changed has-hover => { Tip.hover(self.has-hover, root.tip, root.absolute-position.x + root.width / 2, root.absolute-position.y, root.absolute-position.y + root.height); }
     }
 }
 
@@ -126,6 +161,17 @@ component Row inherits HorizontalLayout {
     @children
 }
 
+component Section inherits HorizontalLayout {
+    in property <string> title;
+    in property <string> reset-tip;
+    callback reset();
+    spacing: 8px;
+    padding-top: 6px;
+    Text { text: root.title; color: Theme.accent; font-size: 14px; font-weight: 600; vertical-alignment: center; }
+    Rectangle { horizontal-stretch: 1; }
+    Btn { label: "Reset"; height: 26px; tip: root.reset-tip; clicked => { root.reset(); } }
+}
+
 component TabBtn inherits Rectangle {
     in property <string> label;
     in property <bool> active;
@@ -134,7 +180,7 @@ component TabBtn inherits Rectangle {
     border-radius: 8px;
     background: active ? Theme.surface : transparent;
     Text { text: root.label; color: root.active ? Theme.accent : Theme.muted; font-size: 14px; horizontal-alignment: center; vertical-alignment: center; }
-    TouchArea { clicked => { root.clicked(); } }
+    TouchArea { clicked => { Tip.text = ""; root.clicked(); } }
 }
 
 export component Panel inherits Window {
@@ -179,6 +225,7 @@ export component Panel inherits Window {
     in-out property <bool> play-mode: false;
     in-out property <bool> paused: false;
     in property <bool> auto-paused: false;
+    in property <bool> hidden: false;
     in-out property <int> tool-index: 0;
     in-out property <float> radius: 28;
     in-out property <string> error-text: "";
@@ -198,12 +245,19 @@ export component Panel inherits Window {
     in-out property <bool> repeat: false;
     in-out property <float> volume: 0.6;
     in property <string> music-dir: "";
+    in property <bool> custom-music-dir: false;
+    in property <string> music-notice: "";
+    // Files can be dropped onto the panel (X11 and Windows, not Wayland).
+    in property <bool> can-drop: false;
+    in property <bool> can-undo-settings: false;
+    in property <string> undo-settings-label: "";
     in property <string> version: "";
     in property <string> config-dir: "";
 
     callback config-edited();
     callback toggle-play();
     callback toggle-pause();
+    callback hide-for(int);
     callback clear();
     callback undo();
     callback redo();
@@ -229,8 +283,15 @@ export component Panel inherits Window {
     callback repeat-edited(bool);
     callback monitor-toggled(int, bool);
     callback dismiss-error();
+    callback preset(int);
+    callback reset-section(int);
+    callback undo-settings();
+    callback add-music();
+    callback choose-music-folder();
+    callback default-music-folder();
+    callback browse-scene();
 
-    property <int> tab: 0;
+    in-out property <int> tab: 0;
 
     VerticalLayout {
         padding: 16px;
@@ -245,8 +306,9 @@ export component Panel inherits Window {
                 text: "auto-paused (fullscreen app)";
                 color: Theme.muted; font-size: 12px; vertical-alignment: center;
             }
-            Btn { label: root.paused ? "Resume snow" : "Pause snow"; active: root.paused; clicked => { root.toggle-pause(); } }
-            Btn { label: root.play-mode ? "Exit play mode" : "Play mode"; active: root.play-mode; clicked => { root.toggle-play(); } }
+            Btn { label: root.hidden ? "Show snow again" : "Hide 1 h"; active: root.hidden; tip: root.hidden ? "The snow is hidden. Click to bring it back now." : "Hide the snow for an hour (your scene is kept), then it comes back by itself."; clicked => { root.hide-for(root.hidden ? 0 : 60); } }
+            Btn { label: root.paused ? "Resume snow" : "Pause snow"; active: root.paused; tip: "Freeze the snow where it is (nothing moves, nothing is drawn anew)."; clicked => { root.toggle-pause(); } }
+            Btn { label: root.play-mode ? "Exit play mode" : "Play mode"; active: root.play-mode; tip: "Play with the snow: the overlay catches the mouse. Esc goes back to your desktop."; clicked => { root.toggle-play(); } }
         }
 
         if root.error-text != "": Rectangle {
@@ -277,59 +339,74 @@ export component Panel inherits Window {
             if root.tab == 0: ScrollView {
                 VerticalLayout {
                     padding: 16px; spacing: 10px; alignment: start;
-                    Row { label: "Intensity"; Sld { value <=> root.intensity; edited => { root.config-edited(); } } }
-                    Row { label: "Flake size"; Sld { minimum: 0.5; maximum: 2.5; value <=> root.flake-size; edited => { root.config-edited(); } } }
-                    Row { label: "Wind (← →)"; Sld { minimum: -1; maximum: 1; value <=> root.wind; edited => { root.config-edited(); } } }
-                    Row { label: "Max pile height"; Sld { minimum: 0.02; maximum: 0.5; value <=> root.max-pile; edited => { root.config-edited(); } } }
-                    Row { label: "Melt rate"; Sld { value <=> root.melt-rate; edited => { root.config-edited(); } } }
+                    HorizontalLayout {
+                        spacing: 6px; alignment: start;
+                        Text { text: "Presets"; color: Theme.muted; font-size: 12px; width: 120px; vertical-alignment: center; }
+                        Btn { label: "☕ Cozy"; tip: "Gentle snow, string lights, two penguins and an aurora at night."; clicked => { root.preset(0); } }
+                        Btn { label: "🌨 Blizzard"; tip: "Heavy, windy snow that piles up high, with frost on the corners."; clicked => { root.preset(1); } }
+                        Btn { label: "· Minimal"; tip: "A light dusting with no extras, at 30 FPS. Easiest on the CPU, GPU and battery."; clicked => { root.preset(2); } }
+                        Btn { label: "🎉 Party"; tip: "Lights, sparkles, aurora, four penguins and snow that dances to music."; clicked => { root.preset(3); } }
+                        Rectangle { horizontal-stretch: 1; }
+                        Btn { label: "↶ Undo change"; enabled: root.can-undo-settings; tip: root.can-undo-settings ? "Undo: " + root.undo-settings-label : "Nothing to undo yet"; clicked => { root.undo-settings(); } }
+                    }
+                    Section { title: "Snowfall"; reset-tip: "Put the snowfall settings back to how snowdesk starts out."; reset => { root.reset-section(0); } }
+                    Row { label: "Intensity"; Sld { tip: "How much snow falls, from a few flakes to a blizzard."; value <=> root.intensity; edited => { root.config-edited(); } } }
+                    Row { label: "Flake size"; Sld { tip: "Size of the falling flakes."; minimum: 0.5; maximum: 2.5; value <=> root.flake-size; edited => { root.config-edited(); } } }
+                    Row { label: "Wind (← →)"; Sld { tip: "Steady wind: left of the middle blows left, right blows right."; minimum: -1; maximum: 1; value <=> root.wind; edited => { root.config-edited(); } } }
+                    Row { label: "Max pile height"; Sld { tip: "How high snow may pile up, as a share of the screen height."; minimum: 0.02; maximum: 0.5; value <=> root.max-pile; edited => { root.config-edited(); } } }
+                    Row { label: "Melt rate"; Sld { tip: "How fast settled snow melts away. All the way left: it never melts."; value <=> root.melt-rate; edited => { root.config-edited(); } } }
                     Row {
                         label: "Season";
                         HorizontalLayout {
                             spacing: 6px; alignment: start;
-                            Btn { label: "❄ Winter"; active: root.season-index == 0; clicked => { root.season-index = 0; root.config-edited(); } }
-                            Btn { label: "🍂 Autumn"; active: root.season-index == 1; clicked => { root.season-index = 1; root.config-edited(); } }
-                            Btn { label: "🌸 Spring"; active: root.season-index == 2; clicked => { root.season-index = 2; root.config-edited(); } }
-                            Btn { label: "🌧 Rain"; active: root.season-index == 3; clicked => { root.season-index = 3; root.config-edited(); } }
-                            Btn { label: "Auto"; active: root.season-index == 4; clicked => { root.season-index = 4; root.config-edited(); } }
+                            Btn { label: "❄ Winter"; tip: "Snow."; active: root.season-index == 0; clicked => { root.season-index = 0; root.config-edited(); } }
+                            Btn { label: "🍂 Autumn"; tip: "Falling leaves."; active: root.season-index == 1; clicked => { root.season-index = 1; root.config-edited(); } }
+                            Btn { label: "🌸 Spring"; tip: "Cherry blossoms."; active: root.season-index == 2; clicked => { root.season-index = 2; root.config-edited(); } }
+                            Btn { label: "🌧 Rain"; tip: "Rain that collects in puddles and dries up."; active: root.season-index == 3; clicked => { root.season-index = 3; root.config-edited(); } }
+                            Btn { label: "Auto"; tip: "Follow the calendar."; active: root.season-index == 4; clicked => { root.season-index = 4; root.config-edited(); } }
                         }
                     }
                     Row {
                         label: "FPS cap";
                         HorizontalLayout {
                             spacing: 6px; alignment: start;
-                            Btn { label: "30"; active: root.fps-index == 0; clicked => { root.fps-index = 0; root.config-edited(); } }
-                            Btn { label: "60"; active: root.fps-index == 1; clicked => { root.fps-index = 1; root.config-edited(); } }
-                            Btn { label: "120"; active: root.fps-index == 2; clicked => { root.fps-index = 2; root.config-edited(); } }
-                            Btn { label: "Uncapped"; active: root.fps-index == 3; clicked => { root.fps-index = 3; root.config-edited(); } }
+                            Btn { label: "30"; tip: "Smooth enough, and the lightest on your PC."; active: root.fps-index == 0; clicked => { root.fps-index = 0; root.config-edited(); } }
+                            Btn { label: "60"; tip: "Smooth (recommended)."; active: root.fps-index == 1; clicked => { root.fps-index = 1; root.config-edited(); } }
+                            Btn { label: "120"; tip: "For high refresh rate monitors. Uses more power."; active: root.fps-index == 2; clicked => { root.fps-index = 2; root.config-edited(); } }
+                            Btn { label: "Uncapped"; tip: "Match the monitor's refresh rate. Uses the most power."; active: root.fps-index == 3; clicked => { root.fps-index = 3; root.config-edited(); } }
                         }
                     }
-                    Sw { label: "Changing weather (calm spells, wind, storms)"; checked <=> root.weather; toggled => { root.config-edited(); } }
+                    Sw { label: "Changing weather (calm spells, wind, storms)"; tip: "The snowfall changes by itself over time, around the intensity you set."; checked <=> root.weather; toggled => { root.config-edited(); } }
                     if root.weather && root.forecast != "": Text { text: "  Forecast: " + root.forecast; color: Theme.accent; font-size: 12px; }
-                    Sw { label: "Random gusts"; checked <=> root.gusts; toggled => { root.config-edited(); } }
-                    Sw { label: "Cursor pushes flakes (wind)"; checked <=> root.cursor-wind; toggled => { root.config-edited(); } }
-                    Sw { label: "Snow settles on windows"; checked <=> root.windows-collide; toggled => { root.config-edited(); } }
-                    Sw { label: "Music-reactive snow"; checked <=> root.music-reactive; toggled => { root.config-edited(); } }
-                    if root.music-reactive: Sw { label: "  React to any music on this PC (Spotify, browser…)"; checked <=> root.system-audio; toggled => { root.config-edited(); } }
-                    Sw { label: "Penguins"; checked <=> root.critter; toggled => { root.config-edited(); } }
+                    Sw { label: "Random gusts"; tip: "Now and then a gust of wind blows the flakes sideways."; checked <=> root.gusts; toggled => { root.config-edited(); } }
+                    Sw { label: "Cursor pushes flakes (wind)"; tip: "Moving the mouse blows the falling flakes away."; checked <=> root.cursor-wind; toggled => { root.config-edited(); } }
+                    Sw { label: "Snow settles on windows"; tip: "Snow piles up on the top edges of your windows. Shake a window to knock it off."; checked <=> root.windows-collide; toggled => { root.config-edited(); } }
+                    Sw { label: "Music-reactive snow"; tip: "Bass hits in the music make gusts and bursts of flakes."; checked <=> root.music-reactive; toggled => { root.config-edited(); } }
+                    if root.music-reactive: Sw { label: "  React to any music on this PC (Spotify, browser…)"; tip: "Listen to everything your speakers play, not just snowdesk's own player. The sound is only analysed, never recorded."; checked <=> root.system-audio; toggled => { root.config-edited(); } }
+                    Section { title: "Penguins"; reset-tip: "Put the penguin settings back to how snowdesk starts out."; reset => { root.reset-section(1); } }
+                    Sw { label: "Penguins"; tip: "Penguins waddle around in the snow. In play mode you can pick them up and throw snowballs at them."; checked <=> root.critter; toggled => { root.config-edited(); } }
                     if root.critter: Row {
                         label: "  How many: " + round(root.penguins);
-                        Sld { minimum: 1; maximum: 12; value <=> root.penguins; edited => { root.penguins = round(root.penguins); root.config-edited(); } }
+                        Sld { tip: "Penguins on each monitor."; minimum: 1; maximum: 12; value <=> root.penguins; edited => { root.penguins = round(root.penguins); root.config-edited(); } }
                     }
-                    if root.critter: Sw { label: "  Sleep in igloos at night (9 pm - 7 am)"; checked <=> root.village; toggled => { root.config-edited(); } }
+                    if root.critter: Sw { label: "  Sleep in igloos at night (9 pm - 7 am)"; tip: "At night the penguins go home to their igloos; in the morning they come out again."; checked <=> root.village; toggled => { root.config-edited(); } }
                     if root.critter: Row {
                         label: "  Size: " + round(root.penguin-size * 10) / 10 + "×";
-                        Sld { minimum: 0.5; maximum: 3; value <=> root.penguin-size; edited => { root.config-edited(); } }
+                        Sld { tip: "How big the penguins are."; minimum: 0.5; maximum: 3; value <=> root.penguin-size; edited => { root.config-edited(); } }
                     }
-                    Sw { label: "String lights on windows"; checked <=> root.lights; toggled => { root.config-edited(); } }
-                    Sw { label: "Icicles on snowy windows"; checked <=> root.icicles; toggled => { root.config-edited(); } }
-                    Sw { label: "Frost on the screen corners (wipe it with the mouse)"; checked <=> root.frost; toggled => { root.config-edited(); } }
-                    Sw { label: "Ice sparkles"; checked <=> root.sparkles; toggled => { root.config-edited(); } }
-                    Sw { label: "Aurora at night"; checked <=> root.aurora; toggled => { root.config-edited(); } }
-                    Sw { label: "Restore last scene on launch"; checked <=> root.restore-scene; toggled => { root.config-edited(); } }
-                    Sw { label: "Start with the desktop"; checked <=> root.autostart; toggled => { root.config-edited(); } }
+                    Section { title: "Extras"; reset-tip: "Put lights, icicles, frost, sparkles and aurora back to how snowdesk starts out."; reset => { root.reset-section(2); } }
+                    Sw { label: "String lights on windows"; tip: "Colourful lights along the top edges of your windows."; checked <=> root.lights; toggled => { root.config-edited(); } }
+                    Sw { label: "Icicles on snowy windows"; tip: "Icicles slowly grow under snowy window edges and drip. Shake the window to break them off."; checked <=> root.icicles; toggled => { root.config-edited(); } }
+                    Sw { label: "Frost on the screen corners (wipe it with the mouse)"; tip: "While you are away, frost creeps in from the corners. Move the mouse to wipe it off."; checked <=> root.frost; toggled => { root.config-edited(); } }
+                    Sw { label: "Ice sparkles"; tip: "Ice and packed snow glitter."; checked <=> root.sparkles; toggled => { root.config-edited(); } }
+                    Sw { label: "Aurora at night"; tip: "Northern lights at the top of the screen at night."; checked <=> root.aurora; toggled => { root.config-edited(); } }
+                    Text { text: "App"; color: Theme.accent; font-size: 14px; font-weight: 600; }
+                    Sw { label: "Restore last scene on launch"; tip: "Keep your snow, snowmen and forts between restarts."; checked <=> root.restore-scene; toggled => { root.config-edited(); } }
+                    Sw { label: "Start with the desktop"; tip: "Start snowdesk (hidden, in the tray) when you log in."; checked <=> root.autostart; toggled => { root.config-edited(); } }
                     Text { text: "Monitors"; color: Theme.muted; font-size: 12px; }
                     for m[i] in root.monitors: Sw {
                         label: m.name; checked: m.enabled;
+                        tip: "Show snow on this monitor.";
                         toggled(on) => { root.monitor-toggled(i, on); }
                     }
                 }
@@ -339,7 +416,7 @@ export component Panel inherits Window {
                 VerticalLayout {
                     padding: 16px; spacing: 12px; alignment: start;
                     Text {
-                        text: "Play mode makes the overlay catch the mouse. Left-click: use tool · right-click flick: throw a snowball · click a penguin or an old snowball to pick it up, drag and fling to throw · Esc: back to passive.";
+                        text: "Play mode makes the overlay catch the mouse. Left-click: use tool · right-click flick: throw a snowball · click a penguin or an old snowball to pick it up, drag and fling to throw · keys 1-9: pick a tool · mouse wheel: brush size · Esc: back to passive. Hover over a tool bar button to see what it does.";
                         color: Theme.muted; font-size: 12px; wrap: word-wrap;
                     }
                     if root.records != "": Text { text: "🏆 " + root.records; color: Theme.accent; font-size: 13px; }
@@ -347,45 +424,46 @@ export component Panel inherits Window {
                     Text { text: "Tool"; color: Theme.muted; font-size: 12px; }
                     HorizontalLayout {
                         spacing: 6px; alignment: start;
-                        Btn { label: "Brush"; active: root.tool-index == 0; clicked => { root.tool-index = 0; root.tool-selected(0); } }
-                        Btn { label: "Shovel"; active: root.tool-index == 1; clicked => { root.tool-index = 1; root.tool-selected(1); } }
-                        Btn { label: "Pack"; active: root.tool-index == 2; clicked => { root.tool-index = 2; root.tool-selected(2); } }
-                        Btn { label: "Freeze"; active: root.tool-index == 3; clicked => { root.tool-index = 3; root.tool-selected(3); } }
-                        Btn { label: "Melt"; active: root.tool-index == 4; clicked => { root.tool-index = 4; root.tool-selected(4); } }
-                        Btn { label: "Snowball"; active: root.tool-index == 5; clicked => { root.tool-index = 5; root.tool-selected(5); } }
-                        Btn { label: "Angel"; active: root.tool-index == 6; clicked => { root.tool-index = 6; root.tool-selected(6); } }
-                        Btn { label: "Bricks"; active: root.tool-index == 7; clicked => { root.tool-index = 7; root.tool-selected(7); } }
-                        Btn { label: "Sled"; active: root.tool-index == 8; clicked => { root.tool-index = 8; root.tool-selected(8); } }
+                        Btn { label: "Brush"; tip: "Paint snow onto the screen. Shortcut in play mode: 1"; active: root.tool-index == 0; clicked => { root.tool-index = 0; root.tool-selected(0); } }
+                        Btn { label: "Shovel"; tip: "Dig snow away. Dig a gap into ice for a fishing hole. Shortcut: 2"; active: root.tool-index == 1; clicked => { root.tool-index = 1; root.tool-selected(1); } }
+                        Btn { label: "Pack"; tip: "Press snow into hard packed snow. Shortcut: 3"; active: root.tool-index == 2; clicked => { root.tool-index = 2; root.tool-selected(2); } }
+                        Btn { label: "Freeze"; tip: "Turn snow into ice (penguins skate on it). Shortcut: 4"; active: root.tool-index == 3; clicked => { root.tool-index = 3; root.tool-selected(3); } }
+                        Btn { label: "Melt"; tip: "Melt snow into dripping water that refreezes. Shortcut: 5"; active: root.tool-index == 4; clicked => { root.tool-index = 4; root.tool-selected(4); } }
+                        Btn { label: "Snowball"; tip: "Press and drag along the snow to roll a ball; lift it onto a bigger one to stack a snowman. Shortcut: 6"; active: root.tool-index == 5; clicked => { root.tool-index = 5; root.tool-selected(5); } }
+                        Btn { label: "Angel"; tip: "Make a snow angel. Shortcut: 7"; active: root.tool-index == 6; clicked => { root.tool-index = 6; root.tool-selected(6); } }
+                        Btn { label: "Bricks"; tip: "Lay packed-snow bricks to build a fort. Shortcut: 8"; active: root.tool-index == 7; clicked => { root.tool-index = 7; root.tool-selected(7); } }
+                        Btn { label: "Sled"; tip: "Click to drop a sled; drag and flick it to push it. Penguins hop on. Shortcut: 9"; active: root.tool-index == 8; clicked => { root.tool-index = 8; root.tool-selected(8); } }
                     }
-                    Row { label: "Tool radius"; Sld { minimum: 6; maximum: 200; value <=> root.radius; edited => { root.radius-edited(root.radius); } } }
+                    Row { label: "Tool radius"; Sld { tip: "Brush size. In play mode, scroll the mouse wheel to change it."; minimum: 6; maximum: 200; value <=> root.radius; edited => { root.radius-edited(root.radius); } } }
                     HorizontalLayout {
                         spacing: 6px; alignment: start;
-                        Btn { label: "Undo"; clicked => { root.undo(); } }
-                        Btn { label: "Redo"; clicked => { root.redo(); } }
-                        Btn { label: "Clear all"; danger: true; clicked => { root.clear(); } }
-                    }
-                    HorizontalLayout {
-                        spacing: 6px; alignment: start;
-                        Btn { label: "Stamp snowman"; clicked => { root.stamp-snowman(); } }
-                        Btn { label: "Igloo"; clicked => { root.igloo(); } }
-                        Btn { label: "Generate mountains"; clicked => { root.mountains(); } }
+                        Btn { label: "Undo"; tip: "Undo the last change to the snow (up to 30 steps)."; clicked => { root.undo(); } }
+                        Btn { label: "Redo"; tip: "Redo what you undid."; clicked => { root.redo(); } }
+                        Btn { label: "Clear all"; danger: true; tip: "Remove all snow, snowballs and snowmen (Undo brings them back)."; clicked => { root.clear(); } }
                     }
                     HorizontalLayout {
                         spacing: 6px; alignment: start;
-                        Btn { label: "Save scene"; clicked => { root.save-scene(); } }
-                        Btn { label: "Load scene"; clicked => { root.load-scene(); } }
+                        Btn { label: "Stamp snowman"; tip: "Put a ready-made snowman somewhere on the screen."; clicked => { root.stamp-snowman(); } }
+                        Btn { label: "Igloo"; tip: "Build an igloo the penguins can walk into."; clicked => { root.igloo(); } }
+                        Btn { label: "Generate mountains"; tip: "Pile up a snowy mountain range along the bottom."; clicked => { root.mountains(); } }
+                    }
+                    HorizontalLayout {
+                        spacing: 6px; alignment: start;
+                        Btn { label: "Save scene"; tip: "Remember the current snow scene (one save slot)."; clicked => { root.save-scene(); } }
+                        Btn { label: "Load scene"; tip: "Go back to the scene you saved."; clicked => { root.load-scene(); } }
                     }
                     Text { text: "Share"; color: Theme.muted; font-size: 12px; }
                     HorizontalLayout {
                         spacing: 6px; alignment: start;
-                        Btn { label: "Export picture"; clicked => { root.export-picture(); } }
-                        Btn { label: "Export scene file"; clicked => { root.export-scene(); } }
-                        Btn { label: "Open folder"; clicked => { root.open-exports(); } }
+                        Btn { label: "Export picture"; tip: "Save a PNG of your snow scene to Pictures/snowdesk. Only the snow is in it, never your desktop."; clicked => { root.export-picture(); } }
+                        Btn { label: "Export scene file"; tip: "Save a .snowscene file a friend can load into their snowdesk."; clicked => { root.export-scene(); } }
+                        Btn { label: "Open folder"; tip: "Open Pictures/snowdesk."; clicked => { root.open-exports(); } }
                     }
                     HorizontalLayout {
                         spacing: 6px;
-                        scene-path := LineEdit { placeholder-text: "Path to a .snowscene file from a friend"; horizontal-stretch: 1; }
-                        Btn { label: "Import"; clicked => { root.import-scene(scene-path.text); } }
+                        Btn { label: "Load a friend's scene…"; tip: "Pick a .snowscene file. You can also open one with snowdesk from your file manager."; clicked => { root.browse-scene(); } }
+                        scene-path := LineEdit { placeholder-text: "…or paste the path to a .snowscene file"; horizontal-stretch: 1; }
+                        Btn { label: "Import"; tip: "Load the .snowscene file at this path."; clicked => { root.import-scene(scene-path.text); } }
                     }
                     if root.notice != "": Text { text: root.notice; color: Theme.good; font-size: 12px; wrap: word-wrap; }
                     Text {
@@ -431,13 +509,13 @@ export component Panel inherits Window {
                 }
                 HorizontalLayout {
                     spacing: 8px; alignment: center;
-                    Btn { label: "Shuffle"; active: root.shuffle; clicked => { root.shuffle = !root.shuffle; root.shuffle-edited(root.shuffle); } }
-                    Btn { label: "⏮"; clicked => { root.prev(); } }
+                    Btn { label: "Shuffle"; tip: "Play the tracks in random order."; active: root.shuffle; clicked => { root.shuffle = !root.shuffle; root.shuffle-edited(root.shuffle); } }
+                    Btn { label: "⏮"; tip: "Previous track"; clicked => { root.prev(); } }
                     Btn { label: root.playing ? "⏸" : "▶"; active: true; min-width: 56px; clicked => { root.play-pause(); } }
-                    Btn { label: "⏭"; clicked => { root.next(); } }
-                    Btn { label: "Repeat"; active: root.repeat; clicked => { root.repeat = !root.repeat; root.repeat-edited(root.repeat); } }
+                    Btn { label: "⏭"; tip: "Next track"; clicked => { root.next(); } }
+                    Btn { label: "Repeat"; tip: "Start the list again after the last track."; active: root.repeat; clicked => { root.repeat = !root.repeat; root.repeat-edited(root.repeat); } }
                     Text { text: "Vol"; color: Theme.muted; font-size: 12px; vertical-alignment: center; }
-                    Sld { width: 120px; maximum: 1.0; value <=> root.volume; edited => { root.volume-edited(root.volume); } }
+                    Sld { width: 120px; tip: "Volume"; maximum: 1.0; value <=> root.volume; edited => { root.volume-edited(root.volume); } }
                 }
                 Rectangle {
                     vertical-stretch: 1; border-radius: 8px; background: Theme.bg; clip: true;
@@ -445,8 +523,13 @@ export component Panel inherits Window {
                         alignment: center; spacing: 8px; padding: 20px;
                         Text { text: "No music yet"; color: Theme.text; font-size: 16px; horizontal-alignment: center; }
                         Text {
-                            text: "Drop your own mp3 / ogg / flac / wav / m4a files into\n" + root.music-dir + "\nThey show up here automatically.";
+                            text: "Click “Add music…” to pick mp3 / ogg / flac / wav / m4a files, or “Use my music folder…” to play the music you already have.\n" + (root.can-drop ? "You can also drop files onto this window, or copy them into\n" : "You can also copy them into\n") + root.music-dir;
                             color: Theme.muted; font-size: 12px; horizontal-alignment: center; wrap: word-wrap;
+                        }
+                        HorizontalLayout {
+                            alignment: center; spacing: 8px;
+                            Btn { label: "Add music…"; active: true; tip: "Pick music files (or a whole folder's worth) to copy into your snowdesk music folder."; clicked => { root.add-music(); } }
+                            Btn { label: "Use my music folder…"; tip: "Play the music in a folder you already have, like Music. Nothing is copied."; clicked => { root.choose-music-folder(); } }
                         }
                     }
                     // ListView only instantiates visible rows (large libraries).
@@ -467,10 +550,39 @@ export component Panel inherits Window {
                 }
                 HorizontalLayout {
                     spacing: 8px;
-                    Btn { label: "Open music folder"; clicked => { root.open-music-folder(); } }
-                    Text { text: root.music-dir; color: Theme.muted; font-size: 11px; vertical-alignment: center; overflow: elide; }
+                    Btn { label: "Add music…"; tip: root.can-drop ? "Pick music files to copy into the music folder. You can also drop files onto this window." : "Pick music files to copy into the music folder."; clicked => { root.add-music(); } }
+                    Btn { label: "Change folder…"; tip: "Play the music in another folder, like your Music folder. Nothing is copied."; clicked => { root.choose-music-folder(); } }
+                    if root.custom-music-dir: Btn { label: "Use default"; tip: "Go back to snowdesk's own music folder."; clicked => { root.default-music-folder(); } }
+                    Btn { label: "Open"; tip: "Open the music folder in your file manager."; clicked => { root.open-music-folder(); } }
+                    Text { text: root.music-dir; color: Theme.muted; font-size: 11px; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
                 }
+                if root.music-notice != "": Text { text: root.music-notice; color: Theme.good; font-size: 12px; wrap: word-wrap; }
             }
         }
+    }
+
+    // Hover help, drawn above everything after a short delay.
+    Timer {
+        interval: 450ms;
+        running: Tip.text != "" && !Tip.shown;
+        triggered => { Tip.shown = true; }
+    }
+    if Tip.shown && Tip.text != "": Rectangle {
+        property <length> pad: 8px;
+        width: min(tip-text.preferred-width + 2 * self.pad, 340px);
+        tip-text := Text {
+            x: parent.pad; y: 5px;
+            width: parent.width - 2 * parent.pad;
+            text: Tip.text; color: Theme.text; font-size: 12px; wrap: word-wrap;
+        }
+        height: tip-text.preferred-height + 10px;
+        x: max(4px, min(root.width - self.width - 4px, Tip.cx - self.width / 2));
+        y: Tip.bottom + 6px + self.height > root.height - 4px ? max(4px, Tip.top - self.height - 6px) : Tip.bottom + 6px;
+        border-radius: 6px;
+        background: Theme.bg;
+        border-width: 1px;
+        border-color: Theme.accent;
+        drop-shadow-blur: 8px;
+        drop-shadow-color: #00000080;
     }
 }

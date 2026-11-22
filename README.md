@@ -92,8 +92,12 @@ Each release includes `SHA256SUMS.txt`. Check a download with
   loopback. The audio is only analysed in memory, never recorded.
 - **Auto-pause**: no rendering on monitors with a focused fullscreen app or
   game. With every monitor covered, nothing is simulated or rendered.
-- Tray icon, single-instance IPC, TOML config with **hot reload**, and an
-  autostart toggle.
+- **Presets** (Cozy, Blizzard, Minimal, Party), **undo** for settings
+  changes and a **Reset** button per section. **Tooltips** on every control
+  in the panel and on the in-overlay tool bar.
+- Tray menu with the current song, music controls, snow amount, season,
+  presets and **Hide snow for 1 hour**. Single-instance IPC, TOML config
+  with **hot reload**, and an autostart toggle.
 - Safety: if the overlay crashes or the GPU resets, the overlay is rebuilt. If
   it ever stops responding while it takes input (play mode), the process exits
   so your screen is never blocked.
@@ -116,7 +120,9 @@ Each release includes `SHA256SUMS.txt`. Check a download with
 | Play mode, shovel a gap into a sheet of ice | a fishing hole: penguins come and fish |
 | Play mode, drag a decoration from the tool bar onto a ball | decorate a snowman |
 | Play mode, right-button flick | throw a snowball |
-| Tool bar `−` / `+` | brush radius |
+| Play mode, keys `1`-`9` | pick a tool (brush, shovel, pack, freeze, melt, snowball, angel, bricks, sled) |
+| Play mode, mouse wheel, or tool bar `−` / `+` | brush radius |
+| Hover over a tool bar button | what it does, and its key |
 | `Esc`, or the red door button on the tool bar | back to passive mode |
 | `snowdesk --pause` | pause / resume the snow |
 
@@ -140,6 +146,7 @@ snowdesk --export-picture save a picture of the scene to Pictures/snowdesk
 snowdesk --export-scene   save a shareable scene file to Pictures/snowdesk
 snowdesk --hidden         start without showing the panel (tray only)
 snowdesk --no-panel       overlay only: no panel, no tray
+snowdesk FILE.snowscene   load a scene file (also "Open with snowdesk")
 ```
 
 ### Hyprland
@@ -171,8 +178,12 @@ If you run the AppImage, use its full path instead of `snowdesk`.
 
 ## Music
 
-No music is bundled. Put your own files in any of these folders (subfolders
-are scanned too):
+No music is bundled. In the Music tab, **Add music…** picks files with the
+system file dialog and copies them into the music folder (on X11 and Windows
+you can also drop files onto the panel), and **Change folder…** plays a folder
+you already have, such as your Music folder, without copying anything.
+
+snowdesk also scans these folders (subfolders too):
 
 | | Folder |
 | --- | --- |
@@ -183,8 +194,9 @@ are scanned too):
 On Linux, sound goes to PulseAudio or PipeWire (through pipewire-pulse) when
 one is running, otherwise to ALSA. On Windows it uses WASAPI.
 
-The first folder is created on first run. The Music tab has an "Open music
-folder" button. New, removed and renamed files show up automatically.
+The first folder is created on first run. New, removed and renamed files show
+up automatically. On Linux the file dialog uses the XDG desktop portal (GTK
+or KDE backend), or zenity if no portal is available.
 
 ## Configuration
 

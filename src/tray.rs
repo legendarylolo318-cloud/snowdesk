@@ -1,8 +1,9 @@
 //! System tray: ksni (StatusNotifierItem) on Linux, tray-icon on Windows.
 
 use crossbeam_channel::Sender;
+use std::path::PathBuf;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub enum UiMsg {
     Show,
     TogglePlay,
@@ -10,6 +11,63 @@ pub enum UiMsg {
     Quit,
     /// config.toml was modified on disk.
     ConfigFileChanged,
+    PlayPauseMusic,
+    NextTrack,
+    /// Index into [`AMOUNTS`].
+    Amount(usize),
+    /// Season index (see `Season::from_index`).
+    Season(i32),
+    /// Index into `Preset::ALL`.
+    Preset(i32),
+    /// Hide the snow, showing it again after this many minutes (0 = show
+    /// it now).
+    HideFor(u32),
+    /// A file dialog (run on its own thread) finished; None = cancelled.
+    Picked(Option<Pick>),
+    /// Music files were copied into the music folder (count or error).
+    MusicAdded(Result<usize, String>),
+}
+
+#[derive(Debug, Clone)]
+pub enum Pick {
+    MusicFiles(Vec<PathBuf>),
+    MusicFolder(PathBuf),
+    Scene(PathBuf),
+}
+
+/// Snow amounts offered in the tray (label, intensity).
+pub const AMOUNTS: [(&str, f32); 4] = [
+    ("Light", 0.15),
+    ("Medium", 0.35),
+    ("Heavy", 0.65),
+    ("Blizzard", 1.0),
+];
+
+pub const SEASONS: [&str; 5] = ["Winter", "Autumn", "Spring", "Rain", "Auto"];
+
+/// The amount closest to an intensity.
+pub fn amount_index(intensity: f32) -> usize {
+    (0..AMOUNTS.len())
+        .min_by(|&a, &b| {
+            (AMOUNTS[a].1 - intensity)
+                .abs()
+                .total_cmp(&(AMOUNTS[b].1 - intensity).abs())
+        })
+        .unwrap_or(1)
+}
+
+/// What the tray menu shows; the panel pushes this when it changes.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct TrayState {
+    /// "Title — Artist", empty when nothing is loaded.
+    pub song: String,
+    pub music_playing: bool,
+    pub has_music: bool,
+    pub paused: bool,
+    pub hidden: bool,
+    pub play_mode: bool,
+    pub amount: usize,
+    pub season: usize,
 }
 
 /// 32×32 RGBA snowflake on a dark disc.
@@ -48,6 +106,7 @@ mod imp {
 
     struct SnowTray {
         tx: Sender<UiMsg>,
+        st: TrayState,
     }
 
     impl ksni::Tray for SnowTray {
@@ -56,6 +115,17 @@ mod imp {
         }
         fn title(&self) -> String {
             "snowdesk".into()
+        }
+        fn tool_tip(&self) -> ksni::ToolTip {
+            ksni::ToolTip {
+                title: "snowdesk".into(),
+                description: if self.st.song.is_empty() {
+                    String::new()
+                } else {
+                    format!("♪ {}", self.st.song)
+                },
+                ..Default::default()
+            }
         }
         fn icon_pixmap(&self) -> Vec<ksni::Icon> {
             let (rgba, n) = icon_rgba();
@@ -78,26 +148,134 @@ mod imp {
                 StandardItem {
                     label: label.into(),
                     activate: Box::new(move |t: &mut Self| {
-                        let _ = t.tx.send(msg);
+                        let _ = t.tx.send(msg.clone());
                     }),
                     ..Default::default()
                 }
                 .into()
             };
-            vec![
+            let radio = |label: &str,
+                         names: Vec<String>,
+                         selected: usize,
+                         f: fn(usize) -> UiMsg|
+             -> ksni::MenuItem<Self> {
+                SubMenu {
+                    label: label.into(),
+                    submenu: vec![
+                        RadioGroup {
+                            selected,
+                            select: Box::new(move |t: &mut Self, i| {
+                                let _ = t.tx.send(f(i));
+                            }),
+                            options: names
+                                .into_iter()
+                                .map(|n| RadioItem {
+                                    label: n,
+                                    ..Default::default()
+                                })
+                                .collect(),
+                        }
+                        .into(),
+                    ],
+                    ..Default::default()
+                }
+                .into()
+            };
+            let st = &self.st;
+            let mut v = vec![
                 item("Show panel", UiMsg::Show),
-                item("Toggle play mode", UiMsg::TogglePlay),
-                item("Pause snow", UiMsg::TogglePause),
+                item(
+                    if st.play_mode {
+                        "Exit play mode"
+                    } else {
+                        "Play mode"
+                    },
+                    UiMsg::TogglePlay,
+                ),
                 MenuItem::Separator,
-                item("Quit", UiMsg::Quit),
-            ]
+            ];
+            if !st.song.is_empty() {
+                v.push(
+                    StandardItem {
+                        label: format!("♪ {}", st.song.replace('_', "__")),
+                        enabled: false,
+                        ..Default::default()
+                    }
+                    .into(),
+                );
+            }
+            if st.has_music {
+                v.push(item(
+                    if st.music_playing {
+                        "Pause music"
+                    } else {
+                        "Play music"
+                    },
+                    UiMsg::PlayPauseMusic,
+                ));
+                v.push(item("Next track", UiMsg::NextTrack));
+                v.push(MenuItem::Separator);
+            }
+            v.push(radio(
+                "Snow amount",
+                AMOUNTS.iter().map(|a| a.0.to_string()).collect(),
+                st.amount,
+                UiMsg::Amount,
+            ));
+            v.push(radio(
+                "Season",
+                SEASONS.iter().map(|s| s.to_string()).collect(),
+                st.season,
+                |i| UiMsg::Season(i as i32),
+            ));
+            v.push(
+                SubMenu {
+                    label: "Preset".into(),
+                    submenu: crate::config::Preset::ALL
+                        .iter()
+                        .enumerate()
+                        .map(|(i, p)| item(p.label(), UiMsg::Preset(i as i32)))
+                        .collect(),
+                    ..Default::default()
+                }
+                .into(),
+            );
+            v.push(item(
+                if st.paused {
+                    "Resume snow"
+                } else {
+                    "Pause snow"
+                },
+                UiMsg::TogglePause,
+            ));
+            if st.hidden {
+                v.push(item("Show snow again", UiMsg::HideFor(0)));
+            } else {
+                v.push(item("Hide snow for 1 hour", UiMsg::HideFor(60)));
+            }
+            v.push(MenuItem::Separator);
+            v.push(item("Quit", UiMsg::Quit));
+            v
         }
     }
 
-    /// Keep the returned guard alive for the lifetime of the app.
-    pub fn spawn(tx: Sender<UiMsg>) -> Option<Box<dyn std::any::Any>> {
-        match (SnowTray { tx }).spawn() {
-            Ok(h) => Some(Box::new(h)),
+    pub struct Tray(ksni::blocking::Handle<SnowTray>);
+
+    impl Tray {
+        pub fn set(&self, st: &TrayState) {
+            let st = st.clone();
+            self.0.update(move |t| t.st = st);
+        }
+    }
+
+    pub fn spawn(tx: Sender<UiMsg>) -> Option<Tray> {
+        match (SnowTray {
+            tx,
+            st: TrayState::default(),
+        })
+        .spawn()
+        {
+            Ok(h) => Some(Tray(h)),
             Err(e) => {
                 tracing::warn!("no system tray available: {e}");
                 None
@@ -109,45 +287,151 @@ mod imp {
 #[cfg(windows)]
 mod imp {
     use super::*;
-    use tray_icon::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem};
-    use tray_icon::{Icon, TrayIconBuilder};
+    use tray_icon::menu::{
+        CheckMenuItem, Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem, Submenu,
+    };
+    use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
+
+    pub struct Tray {
+        _icon: TrayIcon,
+        song: MenuItem,
+        music: MenuItem,
+        next: MenuItem,
+        play: MenuItem,
+        pause: MenuItem,
+        hide: MenuItem,
+        unhide: MenuItem,
+        amounts: Vec<CheckMenuItem>,
+        seasons: Vec<CheckMenuItem>,
+    }
+
+    impl Tray {
+        pub fn set(&self, st: &TrayState) {
+            let song = if st.song.is_empty() {
+                "♪ Nothing playing".to_string()
+            } else {
+                format!("♪ {}", st.song.replace('&', "&&"))
+            };
+            self.song.set_text(song);
+            self.music.set_text(if st.music_playing {
+                "Pause music"
+            } else {
+                "Play music"
+            });
+            self.music.set_enabled(st.has_music);
+            self.next.set_enabled(st.has_music);
+            self.play.set_text(if st.play_mode {
+                "Exit play mode"
+            } else {
+                "Play mode"
+            });
+            self.pause.set_text(if st.paused {
+                "Resume snow"
+            } else {
+                "Pause snow"
+            });
+            self.hide.set_enabled(!st.hidden);
+            self.unhide.set_enabled(st.hidden);
+            for (i, a) in self.amounts.iter().enumerate() {
+                a.set_checked(i == st.amount);
+            }
+            for (i, s) in self.seasons.iter().enumerate() {
+                s.set_checked(i == st.season);
+            }
+            let _ = self._icon.set_tooltip(Some(if st.song.is_empty() {
+                "snowdesk".to_string()
+            } else {
+                format!("snowdesk\n♪ {}", st.song)
+            }));
+        }
+    }
 
     /// Must be called on the thread that runs the Win32 message loop (Slint's).
-    pub fn spawn(tx: Sender<UiMsg>) -> Option<Box<dyn std::any::Any>> {
+    pub fn spawn(tx: Sender<UiMsg>) -> Option<Tray> {
+        let mut ids: Vec<(MenuId, UiMsg)> = Vec::new();
+        let mut mk = |label: &str, msg: UiMsg| {
+            let m = MenuItem::new(label, true, None);
+            ids.push((m.id().clone(), msg));
+            m
+        };
+        let show = mk("Show panel", UiMsg::Show);
+        let play = mk("Play mode", UiMsg::TogglePlay);
+        let music = mk("Play music", UiMsg::PlayPauseMusic);
+        let next = mk("Next track", UiMsg::NextTrack);
+        let pause = mk("Pause snow", UiMsg::TogglePause);
+        let hide = mk("Hide snow for 1 hour", UiMsg::HideFor(60));
+        let unhide = mk("Show snow again", UiMsg::HideFor(0));
+        let quit = mk("Quit", UiMsg::Quit);
+        let presets: Vec<MenuItem> = crate::config::Preset::ALL
+            .iter()
+            .enumerate()
+            .map(|(i, p)| mk(p.label(), UiMsg::Preset(i as i32)))
+            .collect();
+        let mut check = |label: &str, msg: UiMsg| {
+            let m = CheckMenuItem::new(label, true, false, None);
+            ids.push((m.id().clone(), msg));
+            m
+        };
+        let amounts: Vec<CheckMenuItem> = AMOUNTS
+            .iter()
+            .enumerate()
+            .map(|(i, a)| check(a.0, UiMsg::Amount(i)))
+            .collect();
+        let seasons: Vec<CheckMenuItem> = SEASONS
+            .iter()
+            .enumerate()
+            .map(|(i, s)| check(s, UiMsg::Season(i as i32)))
+            .collect();
+        let song = MenuItem::new("♪ Nothing playing", false, None);
+        let sub = |label: &str, items: &[&dyn tray_icon::menu::IsMenuItem]| {
+            Submenu::with_items(label, true, items).ok()
+        };
+        let amount_menu = sub(
+            "Snow amount",
+            &amounts
+                .iter()
+                .map(|m| m as &dyn tray_icon::menu::IsMenuItem)
+                .collect::<Vec<_>>(),
+        )?;
+        let season_menu = sub(
+            "Season",
+            &seasons
+                .iter()
+                .map(|m| m as &dyn tray_icon::menu::IsMenuItem)
+                .collect::<Vec<_>>(),
+        )?;
+        let preset_menu = sub(
+            "Preset",
+            &presets
+                .iter()
+                .map(|m| m as &dyn tray_icon::menu::IsMenuItem)
+                .collect::<Vec<_>>(),
+        )?;
         let menu = Menu::new();
-        let show = MenuItem::new("Show panel", true, None);
-        let play = MenuItem::new("Toggle play mode", true, None);
-        let pause = MenuItem::new("Pause snow", true, None);
-        let quit = MenuItem::new("Quit", true, None);
         menu.append_items(&[
             &show,
             &play,
+            &PredefinedMenuItem::separator(),
+            &song,
+            &music,
+            &next,
+            &PredefinedMenuItem::separator(),
+            &amount_menu,
+            &season_menu,
+            &preset_menu,
             &pause,
+            &hide,
+            &unhide,
             &PredefinedMenuItem::separator(),
             &quit,
         ])
         .ok()?;
         let (rgba, n) = icon_rgba();
         let icon = Icon::from_rgba(rgba, n, n).ok()?;
-        let (s, p, pa, q) = (
-            show.id().clone(),
-            play.id().clone(),
-            pause.id().clone(),
-            quit.id().clone(),
-        );
         MenuEvent::set_event_handler(Some(move |e: MenuEvent| {
-            let m = if e.id == s {
-                UiMsg::Show
-            } else if e.id == p {
-                UiMsg::TogglePlay
-            } else if e.id == pa {
-                UiMsg::TogglePause
-            } else if e.id == q {
-                UiMsg::Quit
-            } else {
-                return;
-            };
-            let _ = tx.send(m);
+            if let Some((_, m)) = ids.iter().find(|(id, _)| *id == e.id) {
+                let _ = tx.send(m.clone());
+            }
         }));
         let tray = TrayIconBuilder::new()
             .with_menu(Box::new(menu))
@@ -155,8 +439,21 @@ mod imp {
             .with_icon(icon)
             .build()
             .ok()?;
-        Some(Box::new(tray))
+        let t = Tray {
+            _icon: tray,
+            song,
+            music,
+            next,
+            play,
+            pause,
+            hide,
+            unhide,
+            amounts,
+            seasons,
+        };
+        t.set(&TrayState::default());
+        Some(t)
     }
 }
 
-pub use imp::spawn;
+pub use imp::{Tray, spawn};

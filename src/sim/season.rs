@@ -92,7 +92,7 @@ mod tests {
             season: Season::Spring,
             ..Default::default()
         };
-        let back = crate::config::Config::from_toml(&c.to_toml()).unwrap();
+        let back = crate::config::Config::from_toml(&c.to_toml().unwrap()).unwrap();
         assert_eq!(back.season, Season::Spring);
         let c = crate::config::Config::from_toml("season = \"rain\"\n").unwrap();
         assert_eq!(c.season, Season::Rain);

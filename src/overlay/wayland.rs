@@ -376,7 +376,20 @@ impl PointerHandler for App {
                     273 => Ptr::Up(Button::Right, x, y),
                     _ => continue,
                 },
-                _ => continue,
+                PointerEventKind::Axis { vertical, .. } => {
+                    // value120: 120 per wheel notch; touchpads only give pixels.
+                    let n = if vertical.value120 != 0 {
+                        -vertical.value120 as f32 / 120.0
+                    } else if vertical.discrete != 0 {
+                        -vertical.discrete as f32
+                    } else {
+                        -vertical.absolute as f32 / 15.0
+                    };
+                    if n == 0.0 {
+                        continue;
+                    }
+                    Ptr::Wheel(n)
+                }
             };
             e.pointer(&name, p);
         }
@@ -412,10 +425,18 @@ impl KeyboardHandler for App {
         _: u32,
         ev: KeyEvent,
     ) {
-        if ev.keysym == Keysym::Escape
-            && let (Some(e), Some(o)) = (self.engine.as_mut(), self.outs.first())
-        {
-            e.pointer(&o.name, Ptr::Escape);
+        let p = if ev.keysym == Keysym::Escape {
+            Ptr::Escape
+        } else {
+            match ev.keysym.raw() {
+                k @ 0x31..=0x39 => Ptr::Digit((k - 0x30) as u8),
+                // Keypad 1-9.
+                k @ 0xffb1..=0xffb9 => Ptr::Digit((k - 0xffb0) as u8),
+                _ => return,
+            }
+        };
+        if let (Some(e), Some(o)) = (self.engine.as_mut(), self.outs.first()) {
+            e.pointer(&o.name, p);
         }
     }
     fn repeat_key(

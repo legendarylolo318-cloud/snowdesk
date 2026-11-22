@@ -22,7 +22,7 @@ use tray::UiMsg;
 
 const HELP: &str = "snowdesk — snow over your desktop
 
-USAGE: snowdesk [OPTIONS]
+USAGE: snowdesk [OPTIONS] [FILE.snowscene]
 
 OPTIONS:
   --toggle-play   toggle play mode in the running instance
@@ -36,7 +36,18 @@ OPTIONS:
   --hidden        start without showing the control panel
   --no-panel      headless overlay only (no UI, no tray)
   -h, --help      show this help
+
+A .snowscene file given as FILE is loaded into the running instance (or
+into a new one).
 ";
+
+/// A scene file named on the command line ("Open with snowdesk").
+fn scene_arg(args: &[String]) -> Option<std::path::PathBuf> {
+    let a = args.iter().find(|a| !a.starts_with("--"))?;
+    let p = std::path::Path::new(a);
+    let p = std::path::absolute(p).ok()?;
+    p.is_file().then_some(p)
+}
 
 fn cli_command(args: &[String]) -> Option<IpcCmd> {
     args.iter().find_map(|a| match a.as_str() {
@@ -78,6 +89,14 @@ fn main() {
             eprintln!("snowdesk is not running ({e})");
             std::process::exit(1);
         }
+        return;
+    }
+    // A scene file goes to the running instance; if none is running, start
+    // up and load it once the overlay is up.
+    let scene = scene_arg(&args);
+    if let Some(p) = &scene
+        && ipc::send(IpcCmd::Import(p.clone())).is_ok()
+    {
         return;
     }
     tracing_subscriber::fmt()
@@ -126,6 +145,9 @@ fn main() {
             IpcCmd::ExportScene => {
                 let _ = cmd_tx.send(OverlayCmd::ExportScene);
             }
+            IpcCmd::Import(p) => {
+                let _ = cmd_tx.send(OverlayCmd::ImportScene(p));
+            }
         });
         if let Err(e) = res {
             if e.kind() == std::io::ErrorKind::AddrInUse {
@@ -137,6 +159,7 @@ fn main() {
             return;
         }
     }
+    audio::library::set_custom_dir(cfg.music_dir.clone());
     let audio = audio::spawn(
         audio_tx,
         audio_rx,
@@ -176,6 +199,15 @@ fn main() {
             })
             .expect("spawn overlay thread")
     };
+
+    if let Some(p) = scene {
+        // Commands sent before the first monitor is attached are dropped.
+        let tx = cmd_tx.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_secs(2));
+            let _ = tx.send(OverlayCmd::ImportScene(p));
+        });
+    }
 
     if headless {
         // Nobody shows these without a panel, but they must be drained or
@@ -221,6 +253,9 @@ fn main() {
                     let _ = atx.send(audio::AudioCmd::SystemAudio(
                         new.system_audio && new.music_reactive && !new.paused,
                     ));
+                    if new.music_dir != last.music_dir {
+                        let _ = atx.send(audio::AudioCmd::MusicDir(new.music_dir.clone()));
+                    }
                     *last = new;
                 }
             })
@@ -244,7 +279,7 @@ fn main() {
             }
         }
     } else {
-        let _tray = tray::spawn(ui_tx.clone());
+        let tray = tray::spawn(ui_tx.clone());
         let ch = ui::Channels {
             overlay_tx: cmd_tx.clone(),
             overlay_rx: ev_rx,
@@ -253,7 +288,7 @@ fn main() {
             ui_tx: ui_tx.clone(),
             ui_rx,
         };
-        if let Err(e) = ui::run(cfg, ch, hidden, host) {
+        if let Err(e) = ui::run(cfg, ch, hidden, tray, host) {
             eprintln!("UI error: {e}");
         }
     }

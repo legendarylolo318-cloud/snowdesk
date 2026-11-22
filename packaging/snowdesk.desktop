@@ -2,7 +2,7 @@
 Type=Application
 Name=snowdesk
 Comment=Snow falls over your desktop. Play with it.
-Exec=snowdesk
+Exec=snowdesk %f
 Icon=snowdesk
 Categories=Utility;AudioVideo;Player;
 StartupWMClass=snowdesk

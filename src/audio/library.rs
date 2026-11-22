@@ -36,9 +36,27 @@ pub fn primary_dir() -> PathBuf {
     }
 }
 
-/// All folders to scan: primary, `music/` next to $APPIMAGE, next to the exe.
+/// The user's own music folder (config `music_dir`), if set.
+static CUSTOM: std::sync::RwLock<Option<PathBuf>> = std::sync::RwLock::new(None);
+
+pub fn set_custom_dir(d: Option<PathBuf>) {
+    *CUSTOM.write().unwrap_or_else(|e| e.into_inner()) = d.filter(|p| p.is_absolute());
+}
+
+/// Where new music goes and what the panel shows: the user's folder if
+/// they picked one, else ours.
+pub fn active_dir() -> PathBuf {
+    CUSTOM
+        .read()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone()
+        .unwrap_or_else(primary_dir)
+}
+
+/// All folders to scan: the user's folder, primary, `music/` next to
+/// $APPIMAGE, next to the exe.
 pub fn music_dirs() -> Vec<PathBuf> {
-    let mut v = vec![primary_dir()];
+    let mut v = vec![active_dir(), primary_dir()];
     if let Some(img) = std::env::var_os("APPIMAGE")
         && let Some(p) = Path::new(&img).parent()
     {
@@ -49,8 +67,51 @@ pub fn music_dirs() -> Vec<PathBuf> {
     {
         v.push(p.join("music"));
     }
-    v.dedup();
+    let mut seen = std::collections::HashSet::new();
+    v.retain(|p| seen.insert(p.clone()));
     v
+}
+
+/// Copy audio files (or the audio inside dropped folders) into
+/// `dest`. Existing files with the same name are kept: the copy gets a
+/// " (2)" suffix. Returns how many files were copied.
+pub fn import_files(paths: &[PathBuf], dest: &Path) -> std::io::Result<usize> {
+    std::fs::create_dir_all(dest)?;
+    let mut files = Vec::new();
+    for p in paths {
+        if p.is_dir() {
+            walk(p, &mut files, 0);
+        } else if is_audio(p) {
+            files.push(p.clone());
+        }
+    }
+    let dest_c = dest.canonicalize().unwrap_or_else(|_| dest.to_path_buf());
+    let mut n = 0;
+    for f in files {
+        // Already in the music folder: nothing to do.
+        if f.parent()
+            .and_then(|d| d.canonicalize().ok())
+            .is_some_and(|d| d.starts_with(&dest_c))
+        {
+            continue;
+        }
+        let Some(name) = f.file_name() else { continue };
+        let mut target = dest.join(name);
+        let stem = f.file_stem().unwrap_or(name).to_string_lossy().into_owned();
+        let ext = f.extension().map(|e| e.to_string_lossy().into_owned());
+        let mut k = 2;
+        while target.exists() {
+            let n = match &ext {
+                Some(e) => format!("{stem} ({k}).{e}"),
+                None => format!("{stem} ({k})"),
+            };
+            target = dest.join(n);
+            k += 1;
+        }
+        std::fs::copy(&f, &target)?;
+        n += 1;
+    }
+    Ok(n)
 }
 
 pub fn ensure_primary_dir() {
@@ -289,6 +350,32 @@ mod tests {
         let a = decode_art(&png).unwrap();
         assert!(a.width <= ART_PX && a.height <= ART_PX);
         assert_eq!(a.rgba.len(), (a.width * a.height * 4) as usize);
+    }
+
+    #[test]
+    fn import_copies_audio_and_renames_clashes() {
+        let base = std::env::temp_dir().join(format!("snowdesk-import-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let (src, dst) = (base.join("src"), base.join("dst"));
+        std::fs::create_dir_all(src.join("album")).unwrap();
+        std::fs::create_dir_all(&dst).unwrap();
+        std::fs::write(src.join("a.mp3"), b"new").unwrap();
+        std::fs::write(src.join("cover.jpg"), b"x").unwrap();
+        std::fs::write(src.join("album/b.flac"), b"x").unwrap();
+        std::fs::write(dst.join("a.mp3"), b"old").unwrap();
+        let n = import_files(
+            &[src.join("a.mp3"), src.join("cover.jpg"), src.join("album")],
+            &dst,
+        )
+        .unwrap();
+        assert_eq!(n, 2);
+        assert_eq!(std::fs::read(dst.join("a.mp3")).unwrap(), b"old");
+        assert_eq!(std::fs::read(dst.join("a (2).mp3")).unwrap(), b"new");
+        assert!(dst.join("b.flac").exists());
+        assert!(!dst.join("cover.jpg").exists());
+        // Files already inside the folder are not duplicated.
+        assert_eq!(import_files(&[dst.join("b.flac")], &dst).unwrap(), 0);
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]

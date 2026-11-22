@@ -193,11 +193,22 @@ impl Host {
                     ElementState::Released => Ptr::Up(b, x, y),
                 })
             }
-            WindowEvent::KeyboardInput { event, .. }
-                if event.state == ElementState::Pressed
-                    && event.logical_key == Key::Named(NamedKey::Escape) =>
-            {
-                Some(Ptr::Escape)
+            WindowEvent::KeyboardInput { event, .. } if event.state == ElementState::Pressed => {
+                match &event.logical_key {
+                    Key::Named(NamedKey::Escape) => Some(Ptr::Escape),
+                    Key::Character(c) => match c.as_str().as_bytes() {
+                        [d @ b'1'..=b'9'] => Some(Ptr::Digit(d - b'0')),
+                        _ => None,
+                    },
+                    _ => None,
+                }
+            }
+            WindowEvent::MouseWheel { delta, .. } => {
+                let n = match delta {
+                    winit::event::MouseScrollDelta::LineDelta(_, y) => *y,
+                    winit::event::MouseScrollDelta::PixelDelta(p) => p.y as f32 / 40.0,
+                };
+                (n != 0.0).then_some(Ptr::Wheel(n))
             }
             WindowEvent::ScaleFactorChanged { .. } => {
                 // Keep covering the whole monitor; the next scan updates the spec.
@@ -355,10 +366,10 @@ pub fn run(ctx: OverlayCtx, host_rx: &Receiver<HostMsg>, wins: &mut Windows) -> 
             handle(m, &mut engine, wins)?;
         }
         #[cfg(target_os = "linux")]
-        if esc.pressed()
-            && let (Some(e), Some((s, _))) = (engine.as_mut(), wins.list.first())
-        {
-            e.pointer(&s.name, Ptr::Escape);
+        for p in esc.pressed() {
+            if let (Some(e), Some((s, _))) = (engine.as_mut(), wins.list.first()) {
+                e.pointer(&s.name, p);
+            }
         }
         let d = match engine.as_mut() {
             Some(e) => e.drive(),

@@ -38,6 +38,8 @@ pub enum OverlayCmd {
     Config(Box<Config>),
     TogglePlay,
     TogglePause,
+    /// Hide the snow on every monitor (the scene is kept) or show it again.
+    Hide(bool),
     Clear,
     Tool(i32),
     Radius(f32),
@@ -61,14 +63,20 @@ pub enum OverlayCmd {
 pub enum OverlayEvent {
     Play(bool),
     Paused(bool),
+    /// The snow is hidden on every monitor ("Hide snow for 1 hour").
+    Hidden(bool),
     AutoPaused(bool),
     Monitors(Vec<String>),
     /// Weather forecast text for the panel ("" when weather is off).
     Forecast(String),
     /// Something worth telling the user (a file was saved, ...).
     Notice(String),
+    /// Result of loading a scene file (the panel shows the Play tab).
+    Imported(String),
     /// Builder challenge records, and which one was just beaten.
     Records(String, Option<&'static str>),
+    /// Tool and radius changed from the overlay (tool bar, keys, wheel).
+    ToolState(i32, f32),
     Error(String),
     Fatal(String),
 }
@@ -144,6 +152,10 @@ pub enum Ptr {
     Up(Button, f32, f32),
     Leave,
     Escape,
+    /// Number key 1-9: pick that tool.
+    Digit(u8),
+    /// Scroll wheel, in notches (positive = up = bigger brush).
+    Wheel(f32),
 }
 
 struct Mon {
@@ -216,6 +228,8 @@ pub struct Engine {
     mons: Vec<Mon>,
     play: bool,
     paused: bool,
+    /// "Hide snow for 1 hour": every monitor is blanked.
+    hidden: bool,
     auto_paused: bool,
     tool: Tool,
     radius: f32,
@@ -264,6 +278,7 @@ impl Engine {
             ctx,
             feed,
             paused: cfg.paused,
+            hidden: false,
             cfg,
             mons: Vec::new(),
             play: false,
@@ -376,6 +391,16 @@ impl Engine {
 
     // ---- commands -------------------------------------------------------
 
+    fn set_hidden(&mut self, h: bool) {
+        if self.hidden != h {
+            self.hidden = h;
+            if h {
+                self.set_play(false);
+            }
+            let _ = self.ctx.ev_tx.send(OverlayEvent::Hidden(h));
+        }
+    }
+
     fn set_play(&mut self, on: bool) {
         if self.play != on {
             self.play = on;
@@ -461,6 +486,10 @@ impl Engine {
             }
             OverlayCmd::TogglePlay => {
                 let p = !self.play;
+                if p {
+                    // Playing with hidden snow makes no sense: show it.
+                    self.set_hidden(false);
+                }
                 self.set_play(p)
             }
             OverlayCmd::TogglePause => {
@@ -471,6 +500,7 @@ impl Engine {
                 }
                 let _ = self.ctx.ev_tx.send(OverlayEvent::Paused(self.paused));
             }
+            OverlayCmd::Hide(h) => self.set_hidden(h),
             OverlayCmd::Clear => {
                 for m in &mut self.mons {
                     m.world.clear_all();
@@ -541,7 +571,8 @@ impl Engine {
                     }
                     Err(e) => format!("Cannot open {}: {e}", path.display()),
                 };
-                let _ = self.ctx.ev_tx.send(OverlayEvent::Notice(msg));
+                tracing::info!("scene import: {msg}");
+                let _ = self.ctx.ev_tx.send(OverlayEvent::Imported(msg));
             }
             OverlayCmd::LoadScene => self.load_scene(),
             OverlayCmd::Quit => {
@@ -577,9 +608,27 @@ impl Engine {
         let Some(mi) = self.mons.iter().position(|m| m.spec.name == mon) else {
             return;
         };
-        if let Ptr::Escape = ev {
-            self.set_play(false);
-            return;
+        match ev {
+            Ptr::Escape => {
+                self.set_play(false);
+                return;
+            }
+            Ptr::Digit(d) => {
+                if (1..=9).contains(&d) {
+                    self.tool = Tool::from_index(d as i32 - 1);
+                    self.send_tool_state();
+                }
+                return;
+            }
+            Ptr::Wheel(n) => {
+                if n.is_finite() && n != 0.0 {
+                    self.radius =
+                        (self.radius * 1.12f32.powf(n.clamp(-5.0, 5.0))).clamp(6.0, 200.0);
+                    self.send_tool_state();
+                }
+                return;
+            }
+            _ => {}
         }
         if let Ptr::Leave = ev {
             if self.ptr_mon == Some(mi) {
@@ -753,7 +802,24 @@ impl Engine {
         }
     }
 
+    fn send_tool_state(&self) {
+        let _ = self
+            .ctx
+            .ev_tx
+            .send(OverlayEvent::ToolState(self.tool.index(), self.radius));
+    }
+
     fn toolbar_action(&mut self, a: toolbar::Action, mi: usize) {
+        use toolbar::Action as A;
+        // Keep the panel's tool buttons and radius slider in step.
+        let sync = matches!(a, A::Tool(_) | A::Radius(_));
+        self.toolbar_action_inner(a, mi);
+        if sync {
+            self.send_tool_state();
+        }
+    }
+
+    fn toolbar_action_inner(&mut self, a: toolbar::Action, mi: usize) {
         use toolbar::Action as A;
         match a {
             A::Tool(t) => self.tool = t,
@@ -868,7 +934,8 @@ impl Engine {
         }
         // Every monitor is either disabled or covered by a fullscreen app.
         let all_off = self.mons.iter().all(|m| {
-            self.cfg.disabled_outputs.contains(&m.spec.name)
+            self.hidden
+                || self.cfg.disabled_outputs.contains(&m.spec.name)
                 || (self.auto_paused && (fs_all || snap.fullscreen_monitors.contains(&m.spec.name)))
         });
         let all_blanked = all_off && self.mons.iter().all(|m| m.blanked);
@@ -969,6 +1036,7 @@ impl Engine {
         let aurora = self.aurora;
         let sparkle = self.cfg.sparkles;
         let (auto, fs_all) = (self.auto_paused, snap.fullscreen_any);
+        let hidden = self.hidden;
 
         // Which monitors are showing snow this frame, and which screen
         // sides lead to one of them (penguins and snowballs walk/fly across).
@@ -976,7 +1044,8 @@ impl Engine {
             .mons
             .iter()
             .map(|m| {
-                self.cfg.disabled_outputs.contains(&m.spec.name)
+                hidden
+                    || self.cfg.disabled_outputs.contains(&m.spec.name)
                     || (auto && (fs_all || snap.fullscreen_monitors.contains(&m.spec.name)))
             })
             .collect();
@@ -1043,6 +1112,7 @@ impl Engine {
                     tool,
                     (radius - 6.0) / 194.0,
                     sc,
+                    (ptr.0 == Some(i) && drag.is_none() && !carrying).then_some(ptr.1),
                 );
                 if ptr.0 == Some(i) && !carrying {
                     let r = radius * sc;

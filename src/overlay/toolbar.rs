@@ -75,6 +75,9 @@ fn groups() -> Vec<Vec<Action>> {
 pub struct Layout {
     pub items: Vec<Item>,
     pub bar: (f32, f32, f32, f32), // x, y, w, h
+    pub screen_w: f32,
+    /// Scale after shrinking to fit (for the tooltip text).
+    pub scale: f32,
 }
 
 pub fn layout(screen_w: f32, scale: f32) -> Layout {
@@ -116,6 +119,8 @@ pub fn layout(screen_w: f32, scale: f32) -> Layout {
     }
     Layout {
         items,
+        screen_w,
+        scale,
         bar: (
             ((screen_w - total) / 2.0).max(pad) - pad,
             y - pad,
@@ -641,7 +646,173 @@ pub fn icon(out: &mut Vec<Instance>, action: Action, cx: f32, cy: f32, s: f32) {
     }
 }
 
-pub fn draw(out: &mut Vec<Instance>, l: &Layout, selected: Tool, radius_scale: f32, scale: f32) {
+/// Tooltip text for a tool bar button (upper case: the pixel font has no
+/// lower case). Tools show their number key.
+pub fn label(a: Action) -> &'static str {
+    match a {
+        Action::Tool(Tool::Brush) => "BRUSH: ADD SNOW  (1)",
+        Action::Tool(Tool::Shovel) => "SHOVEL: DIG SNOW AWAY  (2)",
+        Action::Tool(Tool::Pack) => "PACK SNOW HARD  (3)",
+        Action::Tool(Tool::Freeze) => "FREEZE INTO ICE  (4)",
+        Action::Tool(Tool::Melt) => "MELT  (5)",
+        Action::Tool(Tool::Snowball) => "SNOWBALL: DRAG ALONG SNOW TO ROLL  (6)",
+        Action::Tool(Tool::Angel) => "SNOW ANGEL  (7)",
+        Action::Tool(Tool::Brick) => "BRICKS: BUILD A FORT  (8)",
+        Action::Tool(Tool::Sled) => "SLED: CLICK TO DROP, FLICK TO PUSH  (9)",
+        Action::Radius(d) if d < 0.0 => "SMALLER BRUSH  (SCROLL DOWN)",
+        Action::Radius(_) => "BIGGER BRUSH  (SCROLL UP)",
+        Action::Undo => "UNDO",
+        Action::Redo => "REDO",
+        Action::Clear => "CLEAR ALL SNOW",
+        Action::Snowman => "STAMP A SNOWMAN",
+        Action::Igloo => "BUILD AN IGLOO",
+        Action::Mountains => "MAKE MOUNTAINS",
+        Action::Decor(DecorKind::Eye, _) => "EYES: DRAG ONTO A SNOWBALL",
+        Action::Decor(DecorKind::Nose, _) => "CARROT NOSE: DRAG ONTO A SNOWBALL",
+        Action::Decor(DecorKind::Arm, _) => "STICK ARM: DRAG ONTO A SNOWBALL",
+        Action::Decor(DecorKind::Hat, _) => "HAT: DRAG ONTO A SNOWBALL",
+        Action::Decor(DecorKind::Button, _) => "BUTTON: DRAG ONTO A SNOWBALL",
+        Action::Decor(DecorKind::Scarf, _) => "SCARF: DRAG ONTO A SNOWBALL",
+        Action::Exit => "BACK TO YOUR DESKTOP  (ESC)",
+    }
+}
+
+/// 5x7 pixel font: one byte per row, bit 4 = leftmost column.
+fn glyph(c: char) -> [u8; 7] {
+    match c {
+        'A' => [14, 17, 17, 31, 17, 17, 17],
+        'B' => [30, 17, 17, 30, 17, 17, 30],
+        'C' => [14, 17, 16, 16, 16, 17, 14],
+        'D' => [30, 17, 17, 17, 17, 17, 30],
+        'E' => [31, 16, 16, 30, 16, 16, 31],
+        'F' => [31, 16, 16, 30, 16, 16, 16],
+        'G' => [14, 17, 16, 23, 17, 17, 15],
+        'H' => [17, 17, 17, 31, 17, 17, 17],
+        'I' => [14, 4, 4, 4, 4, 4, 14],
+        'J' => [7, 2, 2, 2, 2, 18, 12],
+        'K' => [17, 18, 20, 24, 20, 18, 17],
+        'L' => [16, 16, 16, 16, 16, 16, 31],
+        'M' => [17, 27, 21, 21, 17, 17, 17],
+        'N' => [17, 17, 25, 21, 19, 17, 17],
+        'O' => [14, 17, 17, 17, 17, 17, 14],
+        'P' => [30, 17, 17, 30, 16, 16, 16],
+        'Q' => [14, 17, 17, 17, 21, 18, 13],
+        'R' => [30, 17, 17, 30, 20, 18, 17],
+        'S' => [15, 16, 16, 14, 1, 1, 30],
+        'T' => [31, 4, 4, 4, 4, 4, 4],
+        'U' => [17, 17, 17, 17, 17, 17, 14],
+        'V' => [17, 17, 17, 17, 17, 10, 4],
+        'W' => [17, 17, 17, 21, 21, 21, 10],
+        'X' => [17, 17, 10, 4, 10, 17, 17],
+        'Y' => [17, 17, 10, 4, 4, 4, 4],
+        'Z' => [31, 1, 2, 4, 8, 16, 31],
+        '0' => [14, 17, 19, 21, 25, 17, 14],
+        '1' => [4, 12, 4, 4, 4, 4, 14],
+        '2' => [14, 17, 1, 2, 4, 8, 31],
+        '3' => [31, 2, 4, 2, 1, 17, 14],
+        '4' => [2, 6, 10, 18, 31, 2, 2],
+        '5' => [31, 16, 30, 1, 1, 17, 14],
+        '6' => [6, 8, 16, 30, 17, 17, 14],
+        '7' => [31, 1, 2, 4, 8, 8, 8],
+        '8' => [14, 17, 17, 14, 17, 17, 14],
+        '9' => [14, 17, 17, 15, 1, 2, 12],
+        '-' => [0, 0, 0, 31, 0, 0, 0],
+        '+' => [0, 4, 4, 31, 4, 4, 0],
+        '(' => [2, 4, 8, 8, 8, 4, 2],
+        ')' => [8, 4, 2, 2, 2, 4, 8],
+        ':' => [0, 12, 12, 0, 12, 12, 0],
+        '.' => [0, 0, 0, 0, 0, 12, 12],
+        ',' => [0, 0, 0, 0, 12, 4, 8],
+        _ => [0; 7],
+    }
+}
+
+/// Width of `text` in pixel-font pixels (6 per character, minus the gap).
+fn text_px(text: &str) -> f32 {
+    (text.chars().count() * 6).saturating_sub(1) as f32
+}
+
+/// Draw `text` with its top-left at (x, y); `px` is one font pixel. Runs of
+/// lit pixels become one rectangle each.
+fn text(out: &mut Vec<Instance>, text: &str, x: f32, y: f32, px: f32, rgb: [f32; 3]) {
+    for (i, c) in text.chars().enumerate() {
+        let gx = x + (i * 6) as f32 * px;
+        for (row, bits) in glyph(c).iter().enumerate() {
+            let mut col = 0;
+            while col < 5 {
+                if bits & (16 >> col) == 0 {
+                    col += 1;
+                    continue;
+                }
+                let start = col;
+                while col < 5 && bits & (16 >> col) != 0 {
+                    col += 1;
+                }
+                let n = (col - start) as f32;
+                q(
+                    out,
+                    gx + (start as f32 + n / 2.0) * px,
+                    y + (row as f32 + 0.5) * px,
+                    n * px / 2.0,
+                    px / 2.0,
+                    0.0,
+                    SHAPE_RECT,
+                    rgb,
+                    1.0,
+                );
+            }
+        }
+    }
+}
+
+/// Tooltip under the hovered button.
+fn tooltip(out: &mut Vec<Instance>, l: &Layout, it: &Item) {
+    let s = label(it.action);
+    let px = (2.0 * l.scale).max(1.0).round();
+    let pad = 6.0 * px / 2.0;
+    let (w, h) = (text_px(s) * px + 2.0 * pad, 7.0 * px + 2.0 * pad);
+    let cx = (it.x + it.size / 2.0).clamp(w / 2.0 + 4.0, (l.screen_w - w / 2.0 - 4.0).max(w / 2.0));
+    let top = l.bar.1 + l.bar.3 + 8.0 * l.scale;
+    q(
+        out,
+        cx,
+        top + h / 2.0,
+        w / 2.0 + px / 2.0,
+        h / 2.0 + px / 2.0,
+        0.0,
+        SHAPE_RECT,
+        [0.48, 0.64, 0.97],
+        0.9,
+    );
+    q(
+        out,
+        cx,
+        top + h / 2.0,
+        w / 2.0,
+        h / 2.0,
+        0.0,
+        SHAPE_RECT,
+        [0.102, 0.106, 0.149],
+        0.96,
+    );
+    text(
+        out,
+        s,
+        (cx - w / 2.0 + pad).round(),
+        (top + pad).round(),
+        px,
+        [0.75, 0.79, 0.96],
+    );
+}
+
+pub fn draw(
+    out: &mut Vec<Instance>,
+    l: &Layout,
+    selected: Tool,
+    radius_scale: f32,
+    scale: f32,
+    hover: Option<(f32, f32)>,
+) {
     let (x, y, w, h) = l.bar;
     // Panel (#24283b) with accent edge.
     q(
@@ -706,6 +877,14 @@ pub fn draw(out: &mut Vec<Instance>, l: &Layout, selected: Tool, radius_scale: f
             1.0,
         );
     }
+    if let Some((hx, hy)) = hover
+        && let Some(it) = l
+            .items
+            .iter()
+            .find(|i| hx >= i.x && hx <= i.x + i.size && hy >= i.y && hy <= i.y + i.size)
+    {
+        tooltip(out, l, it);
+    }
 }
 
 #[cfg(test)]
@@ -722,6 +901,27 @@ mod tests {
         );
         assert!(l.contains(first.x, first.y));
         assert_eq!(l.hit(0.0, 900.0), None);
+    }
+
+    #[test]
+    fn every_label_is_drawable() {
+        let l = layout(1920.0, 1.0);
+        for it in &l.items {
+            let s = label(it.action);
+            assert!(
+                s.chars().all(|c| c == ' ' || glyph(c) != [0; 7]),
+                "missing glyph in {s:?}"
+            );
+            let mut v = Vec::new();
+            tooltip(&mut v, &l, it);
+            // Stays on screen.
+            let (x0, x1) = v.iter().fold((f32::MAX, f32::MIN), |(a, b), i| {
+                (a.min(i.pos[0] - i.half[0]), b.max(i.pos[0] + i.half[0]))
+            });
+            assert!(x0 >= 0.0 && x1 <= 1920.0, "{s}: {x0}..{x1}");
+        }
+        // Tools name their number key.
+        assert!(label(Action::Tool(Tool::Sled)).ends_with("(9)"));
     }
 
     #[test]

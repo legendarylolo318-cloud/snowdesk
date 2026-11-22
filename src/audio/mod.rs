@@ -26,6 +26,8 @@ pub enum AudioCmd {
     Repeat(bool),
     /// Analyse all audio on the computer instead of only our player.
     SystemAudio(bool),
+    /// The user picked another music folder (None = ours).
+    MusicDir(Option<std::path::PathBuf>),
     Quit,
 }
 
@@ -106,6 +108,8 @@ struct Engine {
     progress: (Duration, Instant),
     /// System audio capture, while "react to any music" is on.
     capture: Option<capture::Capture>,
+    /// The music folders changed: watch the new set and rescan.
+    dirs_changed: bool,
 }
 
 impl Engine {
@@ -130,6 +134,7 @@ impl Engine {
             started: false,
             progress: (Duration::ZERO, Instant::now()),
             capture: None,
+            dirs_changed: false,
         }
     }
 
@@ -394,6 +399,10 @@ impl Engine {
                     self.capture = None;
                 }
             }
+            AudioCmd::MusicDir(d) => {
+                library::set_custom_dir(d);
+                self.dirs_changed = true;
+            }
         }
         true
     }
@@ -446,13 +455,20 @@ impl Engine {
             }
         })
         .ok();
-        if let Some(w) = watcher.as_mut() {
+        let mut watched: Vec<std::path::PathBuf> = Vec::new();
+        let rewatch = |w: &mut Option<notify::RecommendedWatcher>,
+                       watched: &mut Vec<std::path::PathBuf>| {
+            let Some(w) = w.as_mut() else { return };
+            for d in watched.drain(..) {
+                let _ = w.unwatch(&d);
+            }
             for d in library::music_dirs() {
-                if d.is_dir() {
-                    let _ = w.watch(&d, RecursiveMode::Recursive);
+                if d.is_dir() && w.watch(&d, RecursiveMode::Recursive).is_ok() {
+                    watched.push(d);
                 }
             }
-        }
+        };
+        rewatch(&mut watcher, &mut watched);
         let mut rescan_at: Option<Instant> = None;
         loop {
             // Only tick while something is loaded or a rescan is pending, so
@@ -474,6 +490,10 @@ impl Engine {
                     rescan_at = Some(Instant::now() + Duration::from_millis(700));
                 }
                 default(wait) => {}
+            }
+            if std::mem::take(&mut self.dirs_changed) {
+                rewatch(&mut watcher, &mut watched);
+                rescan_at = Some(Instant::now());
             }
             if rescan_at.is_some_and(|t| Instant::now() >= t) {
                 rescan_at = None;

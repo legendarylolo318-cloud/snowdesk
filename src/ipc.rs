@@ -9,11 +9,15 @@ use std::time::Duration;
 /// are capped in length.
 fn read_cmd(s: impl Read) -> Option<IpcCmd> {
     let mut line = String::new();
-    BufReader::new(s.take(64)).read_line(&mut line).ok()?;
+    // Room for a long file path (import); anything longer is ignored.
+    BufReader::new(s.take(4096)).read_line(&mut line).ok()?;
+    if !line.ends_with('\n') {
+        return None;
+    }
     IpcCmd::parse(&line)
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum IpcCmd {
     TogglePlay,
     Pause,
@@ -23,10 +27,15 @@ pub enum IpcCmd {
     Quit,
     ExportPicture,
     ExportScene,
+    /// Load a scene file (`snowdesk file.snowscene`, "Open with").
+    Import(std::path::PathBuf),
 }
 
 impl IpcCmd {
-    pub fn name(self) -> &'static str {
+    pub fn name(&self) -> String {
+        if let Self::Import(p) = self {
+            return format!("import {}", p.display());
+        }
         match self {
             Self::TogglePlay => "toggle-play",
             Self::Pause => "pause",
@@ -36,9 +45,16 @@ impl IpcCmd {
             Self::Quit => "quit",
             Self::ExportPicture => "export-picture",
             Self::ExportScene => "export-scene",
+            Self::Import(_) => unreachable!(),
         }
+        .into()
     }
     pub fn parse(s: &str) -> Option<Self> {
+        let s = s.trim_end_matches(['\r', '\n']);
+        if let Some(p) = s.strip_prefix("import ") {
+            let p = std::path::PathBuf::from(p);
+            return p.is_absolute().then_some(Self::Import(p));
+        }
         Some(match s.trim() {
             "toggle-play" => Self::TogglePlay,
             "pause" => Self::Pause,
@@ -163,15 +179,20 @@ mod tests {
             IpcCmd::Quit,
             IpcCmd::ExportPicture,
             IpcCmd::ExportScene,
+            IpcCmd::Import(std::env::temp_dir().join("my scene.snowscene")),
         ] {
-            assert_eq!(IpcCmd::parse(c.name()), Some(c));
+            assert_eq!(IpcCmd::parse(&c.name()), Some(c));
         }
         assert_eq!(IpcCmd::parse("nope"), None);
+        assert_eq!(IpcCmd::parse("import relative.snowscene"), None);
     }
 
     #[test]
     fn oversized_or_garbage_input_is_ignored() {
         assert_eq!(read_cmd(&b"quit\n"[..]), Some(IpcCmd::Quit));
+        // Cut off without a newline: ignored, not a truncated path.
+        let cut = format!("import /{}", "a".repeat(5000));
+        assert_eq!(read_cmd(cut.as_bytes()), None);
         let long = "x".repeat(10_000);
         assert_eq!(read_cmd(long.as_bytes()), None);
         assert_eq!(read_cmd(&[0xff, 0xfe, 0x00][..]), None);

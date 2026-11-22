@@ -3,14 +3,13 @@
 use crate::audio::{AudioCmd, AudioEvent, library};
 use crate::config::Config;
 use crate::overlay::{OverlayCmd, OverlayEvent};
-use crate::tray::UiMsg;
+use crate::tray::{Pick, Tray, TrayState, UiMsg};
 use crossbeam_channel::{Receiver, Sender};
-use slint::{
-    CloseRequestResponse, ComponentHandle, Model, ModelRc, SharedString, Timer, TimerMode, VecModel,
-};
+use slint::{CloseRequestResponse, ComponentHandle, Model, ModelRc, Timer, TimerMode, VecModel};
 use std::cell::{Cell, RefCell};
+use std::path::PathBuf;
 use std::rc::Rc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 slint::include_modules!();
 
@@ -70,7 +69,7 @@ fn spawn_forwarder(
 
 /// Hooks the overlay windows into Slint's winit event loop (X11, Windows).
 #[cfg(any(windows, target_os = "linux"))]
-struct HostHandler(crate::overlay::Host);
+struct HostHandler(crate::overlay::Host, Sender<UiMsg>);
 
 #[cfg(any(windows, target_os = "linux"))]
 impl slint::winit_030::CustomApplicationHandler for HostHandler {
@@ -86,9 +85,17 @@ impl slint::winit_030::CustomApplicationHandler for HostHandler {
         _el: &slint::winit_030::winit::event_loop::ActiveEventLoop,
         id: slint::winit_030::winit::window::WindowId,
         _w: Option<&slint::winit_030::winit::window::Window>,
-        _s: Option<&slint::Window>,
+        s: Option<&slint::Window>,
         ev: &slint::winit_030::winit::event::WindowEvent,
     ) -> slint::winit_030::EventResult {
+        // Files dropped onto the panel (X11 and Windows; winit has no
+        // drag and drop on Wayland).
+        if s.is_some()
+            && let slint::winit_030::winit::event::WindowEvent::DroppedFile(p) = ev
+        {
+            let _ = self.1.send(UiMsg::Picked(Some(dropped(p.clone()))));
+            return slint::winit_030::EventResult::PreventDefault;
+        }
         if self.0.window_event(id, ev) {
             slint::winit_030::EventResult::PreventDefault
         } else {
@@ -104,8 +111,47 @@ impl slint::winit_030::CustomApplicationHandler for HostHandler {
     }
 }
 
+/// A dropped file: scenes are loaded, anything else goes to the music.
+fn dropped(p: PathBuf) -> Pick {
+    if p.extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case("snowscene"))
+    {
+        Pick::Scene(p)
+    } else {
+        Pick::MusicFiles(vec![p])
+    }
+}
+
+/// How a settings change enters the undo history.
+enum Hist {
+    /// Panel edits: one step per burst (a slider drag is one step).
+    Edit,
+    /// Presets, resets, tray picks: always their own step.
+    Step(&'static str),
+    /// App settings (music folder): not undoable.
+    No,
+}
+
+const UNDO_DEPTH: usize = 30;
+
 struct Ctl {
     cfg: RefCell<Config>,
+    /// Earlier settings, newest last, with what changed them.
+    history: RefCell<Vec<(Config, &'static str)>>,
+    last_edit: Cell<Option<Instant>>,
+    tray: Option<Tray>,
+    tray_state: RefCell<TrayState>,
+    /// Now-playing info for the tray.
+    song: RefCell<String>,
+    music_playing: Cell<bool>,
+    has_music: Cell<bool>,
+    play_mode: Cell<bool>,
+    hidden: Cell<bool>,
+    /// "Hide snow for 1 hour": resumes the snow when it fires.
+    hide_timer: Timer,
+    /// A file dialog is open (only one at a time).
+    picking: Rc<Cell<bool>>,
+    ui_tx: Sender<UiMsg>,
     tx: Sender<OverlayCmd>,
     audio: Sender<AudioCmd>,
     /// A fullscreen app covers every monitor (no point listening).
@@ -122,7 +168,11 @@ struct Ctl {
 /// Run system audio capture only while it can matter.
 fn sync_capture(ctl: &Ctl) {
     let c = ctl.cfg.borrow();
-    let on = c.system_audio && c.music_reactive && !c.paused && !ctl.auto_paused.get();
+    let on = c.system_audio
+        && c.music_reactive
+        && !c.paused
+        && !ctl.auto_paused.get()
+        && !ctl.hidden.get();
     let _ = ctl.audio.send(AudioCmd::SystemAudio(on));
 }
 
@@ -137,6 +187,197 @@ fn schedule_save(ctl: &Rc<Ctl>) {
             c2.unsaved.set(false);
         },
     );
+}
+
+/// Apply a new config from the panel, tray or a preset: tell the overlay,
+/// save it, and remember the old one for "Undo change".
+fn commit(ui: &Panel, ctl: &Rc<Ctl>, new: Config, hist: Hist) {
+    let old = ctl.cfg.borrow().clone();
+    if new == old {
+        return;
+    }
+    let now = Instant::now();
+    let push = match hist {
+        Hist::Edit => {
+            let burst = ctl
+                .last_edit
+                .get()
+                .is_some_and(|t| now - t < Duration::from_millis(1200));
+            ctl.last_edit.set(Some(now));
+            (!burst).then_some("your last settings change")
+        }
+        Hist::Step(l) => {
+            ctl.last_edit.set(None);
+            Some(l)
+        }
+        Hist::No => None,
+    };
+    if let Some(label) = push {
+        let mut h = ctl.history.borrow_mut();
+        h.push((old.clone(), label));
+        if h.len() > UNDO_DEPTH {
+            h.remove(0);
+        }
+    }
+    *ctl.cfg.borrow_mut() = new.clone();
+    let _ = ctl.tx.send(OverlayCmd::Config(Box::new(new.clone())));
+    if new.autostart != old.autostart {
+        crate::autostart::set(new.autostart);
+    }
+    sync_capture(ctl);
+    schedule_save(ctl);
+    sync_undo(ui, ctl);
+    sync_tray(ctl);
+}
+
+fn sync_undo(ui: &Panel, ctl: &Ctl) {
+    let h = ctl.history.borrow();
+    ui.set_can_undo_settings(!h.is_empty());
+    ui.set_undo_settings_label(h.last().map(|x| x.1).unwrap_or("").into());
+}
+
+/// Push the tray menu state if it changed.
+fn sync_tray(ctl: &Ctl) {
+    let Some(tray) = &ctl.tray else { return };
+    let c = ctl.cfg.borrow();
+    let st = TrayState {
+        song: ctl.song.borrow().clone(),
+        music_playing: ctl.music_playing.get(),
+        has_music: ctl.has_music.get(),
+        paused: c.paused,
+        hidden: ctl.hidden.get(),
+        play_mode: ctl.play_mode.get(),
+        amount: crate::tray::amount_index(c.intensity),
+        season: c.season.index().clamp(0, 4) as usize,
+    };
+    drop(c);
+    if *ctl.tray_state.borrow() != st {
+        tray.set(&st);
+        *ctl.tray_state.borrow_mut() = st;
+    }
+}
+
+fn show_music_dir(ui: &Panel) {
+    ui.set_music_dir(library::active_dir().display().to_string().into());
+}
+
+/// Open a file dialog on its own thread (it blocks until closed) and post
+/// the result back as `UiMsg::Picked`.
+fn pick(ctl: &Ctl, what: &'static str) {
+    if ctl.picking.replace(true) {
+        return;
+    }
+    let tx = ctl.ui_tx.clone();
+    let start = library::active_dir();
+    let r = std::thread::Builder::new()
+        .name("file-dialog".into())
+        .spawn(move || {
+            // Always answer, even if the dialog panics, or no dialog could
+            // ever open again.
+            let res = std::panic::catch_unwind(|| dialog(what, &start)).unwrap_or(None);
+            let _ = tx.send(UiMsg::Picked(res));
+        });
+    if r.is_err() {
+        ctl.picking.set(false);
+    }
+}
+
+fn dialog(what: &str, start: &std::path::Path) -> Option<Pick> {
+    let d = rfd::FileDialog::new();
+    match what {
+        "music" => d
+            .set_title("Add music to snowdesk")
+            .set_directory(dirs_home())
+            .add_filter("Music", library::EXTENSIONS)
+            .pick_files()
+            .map(Pick::MusicFiles),
+        "folder" => d
+            .set_title("Choose your music folder")
+            .set_directory(start)
+            .pick_folder()
+            .map(Pick::MusicFolder),
+        _ => d
+            .set_title("Load a snowdesk scene")
+            .set_directory(crate::platform::export_dir())
+            .add_filter("snowdesk scene", &["snowscene"])
+            .pick_file()
+            .map(Pick::Scene),
+    }
+}
+
+fn dirs_home() -> PathBuf {
+    directories::UserDirs::new()
+        .and_then(|u| u.audio_dir().map(|p| p.to_path_buf()))
+        .or_else(|| directories::BaseDirs::new().map(|b| b.home_dir().to_path_buf()))
+        .unwrap_or_else(|| PathBuf::from("."))
+}
+
+fn on_picked(ui: &Panel, ctl: &Rc<Ctl>, p: Option<Pick>) {
+    ctl.picking.set(false);
+    match p {
+        None => {}
+        Some(Pick::Scene(p)) => {
+            let _ = ctl.tx.send(OverlayCmd::ImportScene(p));
+        }
+        Some(Pick::MusicFiles(files)) => {
+            ui.set_music_notice("Adding music…".into());
+            let tx = ctl.ui_tx.clone();
+            let dest = library::active_dir();
+            let _ = std::thread::Builder::new()
+                .name("add-music".into())
+                .spawn(move || {
+                    let r = library::import_files(&files, &dest).map_err(|e| e.to_string());
+                    let _ = tx.send(UiMsg::MusicAdded(r));
+                });
+        }
+        // The config is TOML: a folder name that is not valid UTF-8 cannot
+        // be stored in it.
+        Some(Pick::MusicFolder(d)) if d.to_str().is_none() => ui.set_music_notice(
+            "That folder's name has characters snowdesk cannot save. Please rename it or pick another folder."
+                .into(),
+        ),
+        Some(Pick::MusicFolder(d)) => set_music_dir(ui, ctl, Some(d)),
+    }
+}
+
+fn set_music_dir(ui: &Panel, ctl: &Rc<Ctl>, d: Option<PathBuf>) {
+    let mut c = ctl.cfg.borrow().clone();
+    c.music_dir = d.clone();
+    library::set_custom_dir(d.clone());
+    let _ = ctl.audio.send(AudioCmd::MusicDir(d));
+    commit(ui, ctl, c, Hist::No);
+    ui.set_custom_music_dir(ctl.cfg.borrow().music_dir.is_some());
+    show_music_dir(ui);
+    ui.set_music_notice(format!("Playing music from {}", library::active_dir().display()).into());
+}
+
+/// Undo the newest settings change, keeping app state (volume, monitors,
+/// music folder, pause) as it is now.
+fn undo_settings(ui: &Panel, ctl: &Rc<Ctl>) {
+    let Some((mut old, _)) = ctl.history.borrow_mut().pop() else {
+        return;
+    };
+    {
+        let cur = ctl.cfg.borrow();
+        old.volume = cur.volume;
+        old.shuffle = cur.shuffle;
+        old.repeat = cur.repeat;
+        old.paused = cur.paused;
+        old.disabled_outputs = cur.disabled_outputs.clone();
+        old.music_dir = cur.music_dir.clone();
+    }
+    apply_cfg(ui, &old);
+    commit(ui, ctl, old, Hist::No);
+    ctl.last_edit.set(None);
+    sync_undo(ui, ctl);
+}
+
+/// Change the config from code (tray, presets): update the panel too.
+fn change(ui: &Panel, ctl: &Rc<Ctl>, label: &'static str, f: impl FnOnce(&mut Config)) {
+    let mut c = ctl.cfg.borrow().clone();
+    f(&mut c);
+    apply_cfg(ui, &c);
+    commit(ui, ctl, c, Hist::Step(label));
 }
 
 fn fmt_time(d: Duration) -> String {
@@ -227,6 +468,7 @@ pub fn run(
     cfg: Config,
     ch: Channels,
     start_hidden: bool,
+    tray: Option<Tray>,
     #[cfg(any(windows, target_os = "linux"))] host: Option<crate::overlay::Host>,
 ) -> Result<(), slint::PlatformError> {
     let mut sel = slint::BackendSelector::new();
@@ -236,10 +478,14 @@ pub fn run(
         sel = sel.renderer_name("software".into());
     }
     #[cfg(any(windows, target_os = "linux"))]
+    let can_drop = host.is_some();
+    #[cfg(not(any(windows, target_os = "linux")))]
+    let can_drop = false;
+    #[cfg(any(windows, target_os = "linux"))]
     if let Some(h) = host {
         sel = sel
             .backend_name("winit".into())
-            .with_winit_custom_application_handler(HostHandler(h));
+            .with_winit_custom_application_handler(HostHandler(h, ch.ui_tx.clone()));
     }
     sel.select()?;
     slint::set_xdg_app_id("snowdesk")?;
@@ -254,16 +500,29 @@ pub fn run(
         now: Cell::new(None),
         save_timer: Timer::default(),
         unsaved: Cell::new(false),
+        history: RefCell::new(Vec::new()),
+        last_edit: Cell::new(None),
+        tray,
+        tray_state: RefCell::new(TrayState::default()),
+        song: RefCell::new(String::new()),
+        music_playing: Cell::new(false),
+        has_music: Cell::new(false),
+        play_mode: Cell::new(false),
+        hidden: Cell::new(false),
+        hide_timer: Timer::default(),
+        picking: Rc::new(Cell::new(false)),
+        ui_tx: ch.ui_tx.clone(),
     });
+    sync_tray(&ctl);
     sync_capture(&ctl);
     apply_cfg(&ui, &cfg);
     ui.set_tracks(ModelRc::from(ctl.tracks.clone()));
     ui.set_monitors(ModelRc::from(ctl.monitors.clone()));
     ui.set_version(env!("CARGO_PKG_VERSION").into());
     ui.set_config_dir(Config::dir().display().to_string().into());
-    ui.set_music_dir(SharedString::from(
-        library::primary_dir().display().to_string(),
-    ));
+    show_music_dir(&ui);
+    ui.set_custom_music_dir(cfg.music_dir.is_some());
+    ui.set_can_drop(can_drop);
 
     ui.window()
         .on_close_requested(|| CloseRequestResponse::HideWindow);
@@ -274,14 +533,41 @@ pub fn run(
         ui.on_config_edited(move || {
             let Some(ui) = w.upgrade() else { return };
             let new = read_cfg(&ui, &ctl.cfg.borrow());
-            let autostart_changed = new.autostart != ctl.cfg.borrow().autostart;
-            *ctl.cfg.borrow_mut() = new.clone();
-            let _ = ctl.tx.send(OverlayCmd::Config(Box::new(new.clone())));
-            if autostart_changed {
-                crate::autostart::set(new.autostart);
+            commit(&ui, &ctl, new, Hist::Edit);
+        });
+    }
+    {
+        let (w, ctl1) = (ui.as_weak(), ctl.clone());
+        ui.on_preset(move |i| {
+            let (Some(ui), Some(p)) = (w.upgrade(), crate::config::Preset::from_index(i)) else {
+                return;
+            };
+            change(&ui, &ctl1, "the preset", |c| p.apply(c));
+        });
+        let (w, ctl2) = (ui.as_weak(), ctl.clone());
+        ui.on_reset_section(move |i| {
+            let (Some(ui), Some(s)) = (w.upgrade(), crate::config::Section::from_index(i)) else {
+                return;
+            };
+            change(&ui, &ctl2, "the reset", |c| s.reset(c));
+        });
+        let (w, ctl3) = (ui.as_weak(), ctl.clone());
+        ui.on_undo_settings(move || {
+            if let Some(ui) = w.upgrade() {
+                undo_settings(&ui, &ctl3);
             }
-            sync_capture(&ctl);
-            schedule_save(&ctl);
+        });
+        let ctl4 = ctl.clone();
+        ui.on_add_music(move || pick(&ctl4, "music"));
+        let ctl5 = ctl.clone();
+        ui.on_choose_music_folder(move || pick(&ctl5, "folder"));
+        let ctl6 = ctl.clone();
+        ui.on_browse_scene(move || pick(&ctl6, "scene"));
+        let (w, ctl7) = (ui.as_weak(), ctl.clone());
+        ui.on_default_music_folder(move || {
+            if let Some(ui) = w.upgrade() {
+                set_music_dir(&ui, &ctl7, None);
+            }
         });
     }
     {
@@ -343,6 +629,10 @@ pub fn run(
         ui.on_toggle_pause(move || {
             let _ = tx.send(OverlayCmd::TogglePause);
         });
+        let ui_tx = ch.ui_tx.clone();
+        ui.on_hide_for(move |m| {
+            let _ = ui_tx.send(UiMsg::HideFor(m.max(0) as u32));
+        });
         let tx = ch.overlay_tx.clone();
         ui.on_tool_selected(move |i| {
             let _ = tx.send(OverlayCmd::Tool(i));
@@ -360,7 +650,7 @@ pub fn run(
     }
     ui.on_open_music_folder(|| {
         library::ensure_primary_dir();
-        open_folder(&library::primary_dir());
+        open_folder(&library::active_dir());
     });
     // --- music controls ---
     {
@@ -453,6 +743,50 @@ pub fn run(
                         let _ = slint::quit_event_loop();
                     }
                     UiMsg::ConfigFileChanged => reload_config(&ui, &ctl, &atx),
+                    UiMsg::PlayPauseMusic => {
+                        let _ = atx.send(AudioCmd::PlayPause);
+                    }
+                    UiMsg::NextTrack => {
+                        let _ = atx.send(AudioCmd::Next);
+                    }
+                    UiMsg::Amount(i) => {
+                        if let Some(&(_, v)) = crate::tray::AMOUNTS.get(i) {
+                            change(&ui, &ctl, "the snow amount", |c| c.intensity = v);
+                        }
+                    }
+                    UiMsg::Season(i) => change(&ui, &ctl, "the season", |c| {
+                        c.season = crate::sim::season::Season::from_index(i)
+                    }),
+                    UiMsg::Preset(i) => {
+                        if let Some(p) = crate::config::Preset::from_index(i) {
+                            change(&ui, &ctl, "the preset", |c| p.apply(c));
+                        }
+                    }
+                    UiMsg::HideFor(0) => {
+                        ctl.hide_timer.stop();
+                        let _ = ctl.tx.send(OverlayCmd::Hide(false));
+                    }
+                    UiMsg::HideFor(min) => {
+                        let _ = ctl.tx.send(OverlayCmd::Hide(true));
+                        let tx = ctl.tx.clone();
+                        ctl.hide_timer.start(
+                            TimerMode::SingleShot,
+                            Duration::from_secs(u64::from(min) * 60),
+                            move || {
+                                let _ = tx.send(OverlayCmd::Hide(false));
+                            },
+                        );
+                    }
+                    UiMsg::Picked(p) => on_picked(&ui, &ctl, p),
+                    UiMsg::MusicAdded(r) => ui.set_music_notice(
+                        match r {
+                            Ok(0) => "No new music files were found there.".to_string(),
+                            Ok(1) => "Added 1 track.".to_string(),
+                            Ok(n) => format!("Added {n} tracks."),
+                            Err(e) => format!("Could not add the music: {e}"),
+                        }
+                        .into(),
+                    ),
                 }
             }
         };
@@ -481,11 +815,29 @@ pub fn run(
 
 fn on_overlay_event(ui: &Panel, ctl: &Ctl, e: OverlayEvent) {
     match e {
-        OverlayEvent::Play(p) => ui.set_play_mode(p),
+        OverlayEvent::Play(p) => {
+            ui.set_play_mode(p);
+            ctl.play_mode.set(p);
+            sync_tray(ctl);
+        }
         OverlayEvent::Paused(p) => {
             ui.set_paused(p);
             ctl.cfg.borrow_mut().paused = p;
             sync_capture(ctl);
+            sync_tray(ctl);
+        }
+        OverlayEvent::Hidden(h) => {
+            ui.set_hidden(h);
+            ctl.hidden.set(h);
+            if !h {
+                ctl.hide_timer.stop();
+            }
+            sync_capture(ctl);
+            sync_tray(ctl);
+        }
+        OverlayEvent::ToolState(t, r) => {
+            ui.set_tool_index(t);
+            ui.set_radius(r);
         }
         OverlayEvent::AutoPaused(p) => {
             ui.set_auto_paused(p);
@@ -506,6 +858,11 @@ fn on_overlay_event(ui: &Panel, ctl: &Ctl, e: OverlayEvent) {
         }
         OverlayEvent::Forecast(t) => ui.set_forecast(t.into()),
         OverlayEvent::Notice(t) => ui.set_notice(t.into()),
+        OverlayEvent::Imported(t) => {
+            ui.set_notice(t.into());
+            ui.set_tab(1);
+            let _ = ui.show();
+        }
         OverlayEvent::Records(text, beat) => {
             ui.set_records(text.into());
             if let Some(b) = beat {
@@ -540,6 +897,11 @@ fn on_audio_event(ui: &Panel, ctl: &Ctl, e: AudioEvent) {
     match e {
         AudioEvent::Library { tracks, current } => {
             ctl.now.set(current);
+            ctl.has_music.set(!tracks.is_empty());
+            if tracks.is_empty() {
+                ctl.song.borrow_mut().clear();
+            }
+            sync_tray(ctl);
             ctl.tracks.set_vec(
                 tracks
                     .iter()
@@ -555,6 +917,12 @@ fn on_audio_event(ui: &Panel, ctl: &Ctl, e: AudioEvent) {
         }
         AudioEvent::Now { index, track, art } => {
             set_now_row(ctl, Some(index));
+            *ctl.song.borrow_mut() = if track.artist.is_empty() {
+                track.title.clone()
+            } else {
+                format!("{} — {}", track.title, track.artist)
+            };
+            sync_tray(ctl);
             ui.set_now_title(track.title.into());
             ui.set_now_artist(track.artist.into());
             ui.set_now_album(track.album.into());
@@ -576,7 +944,11 @@ fn on_audio_event(ui: &Panel, ctl: &Ctl, e: AudioEvent) {
                 }
             }
         }
-        AudioEvent::Playing(p) => ui.set_playing(p),
+        AudioEvent::Playing(p) => {
+            ui.set_playing(p);
+            ctl.music_playing.set(p);
+            sync_tray(ctl);
+        }
         AudioEvent::Position { pos, dur } => {
             ui.set_position(pos.as_secs_f32());
             ui.set_position_text(fmt_time(pos).into());
@@ -620,6 +992,12 @@ fn reload_config(ui: &Panel, ctl: &Ctl, audio: &Sender<AudioCmd>) {
     if new.autostart != old.autostart {
         crate::autostart::set(new.autostart);
     }
+    if new.music_dir != old.music_dir {
+        library::set_custom_dir(new.music_dir.clone());
+        let _ = audio.send(AudioCmd::MusicDir(new.music_dir.clone()));
+        ui.set_custom_music_dir(new.music_dir.is_some());
+        show_music_dir(ui);
+    }
     let off = new.disabled_outputs.clone();
     for i in 0..ctl.monitors.row_count() {
         if let Some(mut r) = ctl.monitors.row_data(i) {
@@ -628,4 +1006,5 @@ fn reload_config(ui: &Panel, ctl: &Ctl, audio: &Sender<AudioCmd>) {
         }
     }
     *ctl.cfg.borrow_mut() = new;
+    sync_tray(ctl);
 }

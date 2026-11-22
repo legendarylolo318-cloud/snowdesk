@@ -20,6 +20,22 @@ pub enum Tool {
 }
 
 impl Tool {
+    pub const ALL: [Tool; 9] = [
+        Tool::Brush,
+        Tool::Shovel,
+        Tool::Pack,
+        Tool::Freeze,
+        Tool::Melt,
+        Tool::Snowball,
+        Tool::Angel,
+        Tool::Brick,
+        Tool::Sled,
+    ];
+
+    pub fn index(self) -> i32 {
+        Self::ALL.iter().position(|&t| t == self).unwrap_or(0) as i32
+    }
+
     pub fn from_index(i: i32) -> Tool {
         match i {
             0 => Tool::Brush,

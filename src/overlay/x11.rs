@@ -1,15 +1,23 @@
 //! X11 helpers for the winit overlay. Override-redirect windows never get
-//! keyboard focus, so in play mode Esc is grabbed on the root window instead.
+//! keyboard focus, so in play mode Esc and the tool keys 1-9 are grabbed on
+//! the root window instead.
 
+use super::Ptr;
 use x11rb::connection::Connection;
 use x11rb::protocol::Event;
 use x11rb::protocol::xproto::{ConnectionExt, GrabMode, ModMask};
 use x11rb::rust_connection::RustConnection;
 
 const XK_ESCAPE: u32 = 0xff1b;
+/// XK_1 ..= XK_9.
+const XK_DIGITS: std::ops::RangeInclusive<u32> = 0x31..=0x39;
+
+/// Grabbed keycodes and what each means.
+type Keys = Vec<(u8, Ptr)>;
 
 pub struct EscapeGrab {
-    conn: Option<(RustConnection, u32, u8)>,
+    /// Connection, root window, keys.
+    conn: Option<(RustConnection, u32, Keys)>,
     on: bool,
 }
 
@@ -25,52 +33,64 @@ impl EscapeGrab {
                 .reply()
                 .ok()?;
             let per = map.keysyms_per_keycode.max(1) as usize;
-            let i = map.keysyms.iter().position(|&k| k == XK_ESCAPE)?;
-            Some((c, root, min + (i / per) as u8))
+            // First keycode whose unshifted keysym is `sym`.
+            let code = |sym: u32| {
+                map.keysyms
+                    .chunks(per)
+                    .position(|k| k.first() == Some(&sym))
+                    .map(|i| min + i as u8)
+            };
+            let mut keys = vec![(code(XK_ESCAPE)?, Ptr::Escape)];
+            for s in XK_DIGITS {
+                if let Some(k) = code(s) {
+                    keys.push((k, Ptr::Digit((s - 0x30) as u8)));
+                }
+            }
+            Some((c, root, keys))
         })();
         Self { conn, on: false }
     }
 
     pub fn set(&mut self, on: bool) {
-        let Some((c, root, key)) = &self.conn else {
+        let Some((c, root, keys)) = &self.conn else {
             return;
         };
         if on == self.on {
             return;
         }
         self.on = on;
-        let _ = if on {
-            c.grab_key(
-                false,
-                *root,
-                ModMask::ANY,
-                *key,
-                GrabMode::ASYNC,
-                GrabMode::ASYNC,
-            )
-            .map(|_| ())
-        } else {
-            c.ungrab_key(*key, *root, ModMask::ANY).map(|_| ())
-        };
+        for (key, _) in keys {
+            let _ = if on {
+                c.grab_key(
+                    false,
+                    *root,
+                    ModMask::ANY,
+                    *key,
+                    GrabMode::ASYNC,
+                    GrabMode::ASYNC,
+                )
+                .map(|_| ())
+            } else {
+                c.ungrab_key(*key, *root, ModMask::ANY).map(|_| ())
+            };
+        }
         let _ = c.flush();
     }
 
-    /// True if Esc was pressed since the last call (only while grabbed).
-    pub fn pressed(&mut self) -> bool {
-        let Some((c, _, key)) = &self.conn else {
-            return false;
+    /// Grabbed keys pressed since the last call (only while grabbed).
+    pub fn pressed(&mut self) -> Vec<Ptr> {
+        let Some((c, _, keys)) = &self.conn else {
+            return Vec::new();
         };
-        if !self.on {
-            return false;
-        }
-        let mut hit = false;
+        let mut out = Vec::new();
         while let Ok(Some(ev)) = c.poll_for_event() {
-            if let Event::KeyPress(k) = ev
-                && k.detail == *key
+            if self.on
+                && let Event::KeyPress(k) = ev
+                && let Some((_, p)) = keys.iter().find(|(code, _)| *code == k.detail)
             {
-                hit = true;
+                out.push(*p);
             }
         }
-        hit
+        out
     }
 }

@@ -1,6 +1,6 @@
 [package]
 name = "snowdesk"
-version = "0.4.0"
+version = "0.5.0"
 edition = "2024"
 rust-version = "1.88"
 description = "Snow falls over your desktop: a click-through snow overlay you can play with, plus a music player"
@@ -21,6 +21,9 @@ lofty = "0.25.5"
 notify = "8.2.2"
 pollster = "1.0.3"
 raw-window-handle = "0.6.2"
+# Native file pickers: XDG portal (falls back to zenity) on Linux, the
+# common file dialog on Windows.
+rfd = { version = "0.18.0", default-features = false, features = ["xdg-portal"] }
 rodio = { version = "0.23.0", default-features = false, features = ["playback", "flac", "mp3", "mp4", "vorbis", "wav"] }
 rustfft = "6.4.1"
 serde = { version = "1.0.229", features = ["derive"] }
